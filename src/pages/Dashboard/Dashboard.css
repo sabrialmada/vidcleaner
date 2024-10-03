@@ -1,0 +1,148 @@
+/* Dashboard.css */
+/* .dashboard-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    font-family: 'system-ui', sans-serif;
+  }
+  
+  .user-info {
+    display: flex;
+    align-items: center;
+  }
+  
+  .user-info span {
+    margin-right: 15px;
+  }
+  
+  .logout-btn {
+    background-color: #44ACE9;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  
+  .dashboard-body {
+    display: flex;
+    height: 100%;
+  }
+  
+  .sidebar {
+    width: 250px;
+    background-color: #d1cfcfa5;
+    padding: 30px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    border-radius: 0px 10px;
+  }
+  
+  .sidebar ul {
+    list-style: none;
+    padding: 0;
+  }
+  
+  .sidebar ul li {
+    margin: 20px 0;
+    font-size: 18px;
+  }
+  
+  .main-content {
+    flex-grow: 1;
+    padding: 20px;
+  }
+
+.main-content h2{
+  color: #626161;
+}
+
+.sidebar hr{
+  margin-bottom: 20px;
+}
+
+.sidebar h3{
+  font-size: 14px;
+  color: #626161;
+} */
+
+/* Dashboard.css */
+.dashboard-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  font-family: 'system-ui', sans-serif;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+}
+
+.user-info span {
+  margin-right: 15px;
+}
+
+.logout-btn {
+  background-color: #44ACE9;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.dashboard-body {
+  display: flex;
+  height: 100%;
+}
+
+.sidebar {
+  width: 250px;
+  background-color: #d1cfcfa5;
+  padding: 30px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  border-radius: 0px 10px;
+}
+
+.sidebar ul {
+  list-style: none;
+  padding: 0;
+}
+
+.sidebar ul li {
+  margin: 20px 0;
+  font-size: 18px;
+}
+
+.sidebar ul li a {
+  text-decoration: none; /* Remove underline */
+  color: #626161; /* Change link color */
+  /* font-weight: 500; */ /* Customize font weight */
+}
+
+.sidebar ul li a.active {
+  color: #44ACE9; /* Active link color */
+  font-weight: bold;
+}
+
+.sidebar ul li a:hover {
+  font-weight: bold; /* Hover effect */
+}
+
+.main-content {
+  flex-grow: 1;
+  padding: 20px;
+}
+
+.main-content h2 {
+  color: #626161;
+}
+
+.sidebar hr {
+  margin-bottom: 20px;
+}
+
+.sidebar h3 {
+  font-size: 14px;
+  color: #626161;
+}

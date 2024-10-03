@@ -1,38 +1,59 @@
-.App {
-  text-align: center;
+
+/* General styles */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
 
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
+body {
+  /* color: rgb(9, 9, 11); */
+  background-color: #f4f4f4;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
-}
-
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
+.home-container {
   display: flex;
-  flex-direction: column;
+  justify-content: space-between;
   align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  padding: 100px 20px;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
-.App-link {
-  color: #61dafb;
+.hero-text {
+  max-width: 600px;
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.hero-text h1 {
+  font-size: 48px;
+  line-height: 1.2;
+  color: #333;
 }
+
+.highlight {
+  color: #ff5fa2;
+}
+
+.brand-name {
+  color: #44ACE9;
+}
+
+.hero-text p {
+  font-size: 20px;
+  color: #666;
+  margin-top: 20px;
+}
+
+.get-started-btn {
+  background-color: #44ACE9;
+  color: #fff;
+  border: none;
+  padding: 15px 30px;
+  font-size: 18px;
+  border-radius: 5px;
+  margin-top: 30px;
+  cursor: pointer;
+}
+

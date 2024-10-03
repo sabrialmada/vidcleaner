@@ -1,0 +1,75 @@
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:22:18"}
+{"level":"info","message":"Checking subscription status for user:","service":"subscription-service","timestamp":"2024-10-02 18:22:18","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:22:18","userId":"66f1b893f9d421330879d58e"}
+{"isSubscribed":true,"level":"info","message":"Subscription status retrieved","service":"subscription-service","timestamp":"2024-10-02 18:22:18","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:23:48"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:23:48","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:23:49"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:23:49","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:23:58"}
+{"level":"info","message":"Cancelling subscription for user:","service":"subscription-service","timestamp":"2024-10-02 18:23:58","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:23:58","userId":"66f1b893f9d421330879d58e"}
+{"error":"User validation failed: subscriptionStatus: `cancelling` is not a valid enum value for path `subscriptionStatus`.","level":"error","message":"Error cancelling subscription:","service":"subscription-service","timestamp":"2024-10-02 18:23:58","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:26:05"}
+{"level":"info","message":"Checking subscription status for user:","service":"subscription-service","timestamp":"2024-10-02 18:26:05","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:26:05","userId":"66f1b893f9d421330879d58e"}
+{"isSubscribed":true,"level":"info","message":"Subscription status retrieved","service":"subscription-service","timestamp":"2024-10-02 18:26:05","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:27:02"}
+{"level":"info","message":"Checking subscription status for user:","service":"subscription-service","timestamp":"2024-10-02 18:27:02","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:27:02","userId":"66f1b893f9d421330879d58e"}
+{"isSubscribed":true,"level":"info","message":"Subscription status retrieved","service":"subscription-service","timestamp":"2024-10-02 18:27:02","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:28:06"}
+{"level":"info","message":"Checking subscription status for user:","service":"subscription-service","timestamp":"2024-10-02 18:28:06","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:28:06","userId":"66f1b893f9d421330879d58e"}
+{"isSubscribed":true,"level":"info","message":"Subscription status retrieved","service":"subscription-service","timestamp":"2024-10-02 18:28:06","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:28:31"}
+{"level":"info","message":"Checking subscription status for user:","service":"subscription-service","timestamp":"2024-10-02 18:28:31","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:28:31","userId":"66f1b893f9d421330879d58e"}
+{"isSubscribed":true,"level":"info","message":"Subscription status retrieved","service":"subscription-service","timestamp":"2024-10-02 18:28:31","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:28:42"}
+{"level":"info","message":"Checking subscription status for user:","service":"subscription-service","timestamp":"2024-10-02 18:28:42","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:28:42","userId":"66f1b893f9d421330879d58e"}
+{"isSubscribed":true,"level":"info","message":"Subscription status retrieved","service":"subscription-service","timestamp":"2024-10-02 18:28:42","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:29:10"}
+{"level":"info","message":"Checking subscription status for user:","service":"subscription-service","timestamp":"2024-10-02 18:29:10","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:29:10","userId":"66f1b893f9d421330879d58e"}
+{"isSubscribed":true,"level":"info","message":"Subscription status retrieved","service":"subscription-service","timestamp":"2024-10-02 18:29:10","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:29:29"}
+{"level":"info","message":"Checking subscription status for user:","service":"subscription-service","timestamp":"2024-10-02 18:29:29","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:29:29","userId":"66f1b893f9d421330879d58e"}
+{"isSubscribed":true,"level":"info","message":"Subscription status retrieved","service":"subscription-service","timestamp":"2024-10-02 18:29:29","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:30:14"}
+{"level":"info","message":"Checking subscription status for user:","service":"subscription-service","timestamp":"2024-10-02 18:30:14","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:30:14","userId":"66f1b893f9d421330879d58e"}
+{"isSubscribed":true,"level":"info","message":"Subscription status retrieved","service":"subscription-service","timestamp":"2024-10-02 18:30:14","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:31:17"}
+{"level":"info","message":"Checking subscription status for user:","service":"subscription-service","timestamp":"2024-10-02 18:31:17","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:31:17","userId":"66f1b893f9d421330879d58e"}
+{"isSubscribed":true,"level":"info","message":"Subscription status retrieved","service":"subscription-service","timestamp":"2024-10-02 18:31:17","userId":"66f1b893f9d421330879d58e"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:34:17"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:34:17","userId":"66fdbc52019d8d14ade1089b"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:34:17"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:34:17","userId":"66fdbc52019d8d14ade1089b"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:35:32"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:35:32","userId":"66fdbc52019d8d14ade1089b"}
+{"level":"info","message":"Subscription created successfully","service":"subscription-service","subscriptionId":"sub_1Q5aCnGvQcDuKt0j99pRkI7e","timestamp":"2024-10-02 18:35:34","userId":"66fdbc52019d8d14ade1089b"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:35:50"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:35:50","userId":"66fdbc52019d8d14ade1089b"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:35:50"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:35:50","userId":"66fdbc52019d8d14ade1089b"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:36:00"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:36:00","userId":"66fdbc52019d8d14ade1089b"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-02 18:36:00"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-02 18:36:00","userId":"66fdbc52019d8d14ade1089b"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-03 18:50:50"}
+{"level":"info","message":"Checking subscription status for user:","service":"subscription-service","timestamp":"2024-10-03 18:50:50","userId":"66ff11065d84bf948db280b0"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-03 18:50:50","userId":"66ff11065d84bf948db280b0"}
+{"isSubscribed":false,"level":"info","message":"Subscription status retrieved","service":"subscription-service","timestamp":"2024-10-03 18:50:50","userId":"66ff11065d84bf948db280b0"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-03 18:52:07"}
+{"level":"info","message":"Checking subscription status for user:","service":"subscription-service","timestamp":"2024-10-03 18:52:07","userId":"66ff11065d84bf948db280b0"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-03 18:52:07","userId":"66ff11065d84bf948db280b0"}
+{"isSubscribed":false,"level":"info","message":"Subscription status retrieved","service":"subscription-service","timestamp":"2024-10-03 18:52:07","userId":"66ff11065d84bf948db280b0"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-03 18:52:31"}
+{"level":"info","message":"Checking subscription status for user:","service":"subscription-service","timestamp":"2024-10-03 18:52:31","userId":"66ff11065d84bf948db280b0"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-03 18:52:31","userId":"66ff11065d84bf948db280b0"}
+{"isSubscribed":false,"level":"info","message":"Subscription status retrieved","service":"subscription-service","timestamp":"2024-10-03 18:52:31","userId":"66ff11065d84bf948db280b0"}

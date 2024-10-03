@@ -1,0 +1,53 @@
+/* Pricing Card Styles */
+
+.pricing-card {
+    background-color: #fff;
+    padding: 30px;
+    border-radius: 10px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    max-width: 350px;
+}
+
+.pricing-card h2{
+    color: #44ACE9;
+    font-size: 24px;
+}
+
+.price {
+    font-size: 36px;
+    color: #333;
+    margin: 20px 0;
+}
+
+.price span {
+    font-size: 18px;
+    color: #999;
+}
+
+.pricing-card p {
+    font-size: 16px;
+    color: #666;
+}
+
+.pricing-card ul {
+    list-style: none;
+    padding: 0;
+}
+
+.pricing-card ul li {
+    font-size: 16px;
+    color: #333;
+    margin-top: 10px;
+}
+
+.pricing-card .get-started-btn {
+    width: 100%;
+    margin-top: 0px/* 20px */;
+    background-color: #44ACE9;
+    color: #fff;
+    border: none;
+    padding: 15px 30px;
+    font-size: 18px;
+    border-radius: 5px;
+    cursor: pointer;
+}
