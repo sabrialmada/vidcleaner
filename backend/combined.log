@@ -73,3 +73,15 @@
 {"level":"info","message":"Checking subscription status for user:","service":"subscription-service","timestamp":"2024-10-03 18:52:31","userId":"66ff11065d84bf948db280b0"}
 {"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-03 18:52:31","userId":"66ff11065d84bf948db280b0"}
 {"isSubscribed":false,"level":"info","message":"Subscription status retrieved","service":"subscription-service","timestamp":"2024-10-03 18:52:31","userId":"66ff11065d84bf948db280b0"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-04 12:20:49"}
+{"level":"info","message":"Checking subscription status for user:","service":"subscription-service","timestamp":"2024-10-04 12:20:49","userId":"66ff1664ebdb30f926f80c76"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-04 12:20:49","userId":"66ff1664ebdb30f926f80c76"}
+{"isSubscribed":false,"level":"info","message":"Subscription status retrieved","service":"subscription-service","timestamp":"2024-10-04 12:20:49","userId":"66ff1664ebdb30f926f80c76"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-04 12:21:27"}
+{"level":"info","message":"Checking subscription status for user:","service":"subscription-service","timestamp":"2024-10-04 12:21:27","userId":"66ff1664ebdb30f926f80c76"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-04 12:21:27","userId":"66ff1664ebdb30f926f80c76"}
+{"isSubscribed":false,"level":"info","message":"Subscription status retrieved","service":"subscription-service","timestamp":"2024-10-04 12:21:28","userId":"66ff1664ebdb30f926f80c76"}
+{"level":"info","message":"Authenticating token","service":"auth-middleware","timestamp":"2024-10-04 12:23:23"}
+{"level":"info","message":"Checking subscription status for user:","service":"subscription-service","timestamp":"2024-10-04 12:23:23","userId":"6700080d67f2e7eb27d6e1da"}
+{"level":"info","message":"Token verified successfully","service":"auth-middleware","timestamp":"2024-10-04 12:23:23","userId":"6700080d67f2e7eb27d6e1da"}
+{"isSubscribed":false,"level":"info","message":"Subscription status retrieved","service":"subscription-service","timestamp":"2024-10-04 12:23:24","userId":"6700080d67f2e7eb27d6e1da"}
