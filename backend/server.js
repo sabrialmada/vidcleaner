@@ -526,7 +526,7 @@ mongoose.connect(process.env.MONGODB_URI, {
   .then(() => console.log('MongoDB connected'))
   .catch(err => console.error('MongoDB connection error:', err));
 
-console.log('Connecting to:', process.env.MONGODB_URI);
+console.log('Attempting to connect to MongoDB...');
 
 const videoRoutes = require('./routes/videoRoutes');
 const reelRoutes = require('./routes/reelRoutes');
