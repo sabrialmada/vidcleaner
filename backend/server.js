@@ -528,6 +528,8 @@ mongoose.connect(process.env.MONGODB_URI, {
 
 console.log('Attempting to connect to MongoDB...');
 
+app.set('trust proxy', 1); // Trust first proxy
+
 const videoRoutes = require('./routes/videoRoutes');
 const reelRoutes = require('./routes/reelRoutes');
 const authRoutes = require('./routes/auth');
