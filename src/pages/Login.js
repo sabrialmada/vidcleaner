@@ -97,8 +97,8 @@ const Login = ({ setUserEmail }) => {
   
     try {
       console.log('Attempting login for:', email);
-      console.log('Password being sent:', password); // New console log
-      const res = await axios.post('http://localhost:5000/api/auth/login', { email, password });
+      /* console.log('Password being sent:', password); */ // New console log
+      const res = await axios.post(`${API_BASE_URL}/api/auth/login`, { email, password });
       
       console.log('Login response:', res.data);
       const { accessToken, email: userEmail } = res.data;

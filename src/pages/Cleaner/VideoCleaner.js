@@ -633,7 +633,7 @@ const VideoCleaner = () => {
       }
   
       console.log('Sending request to check subscription status');
-      const response = await axios.get('http://localhost:5000/api/subscriptions/status', {
+      const response = await axios.get(`${API_BASE_URL}/api/subscriptions/status`, { 
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
@@ -682,7 +682,7 @@ const VideoCleaner = () => {
 
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.post('http://localhost:5000/api/process-videos', formData, {
+      const response = await axios.post(`${API_BASE_URL}/api/process-videos`, formData, {
         responseType: 'blob',
         headers: { 
           'Authorization': `Bearer ${token}`,

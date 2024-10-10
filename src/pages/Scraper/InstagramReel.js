@@ -329,9 +329,9 @@ const InstagramReel = () => {
       const token = localStorage.getItem('token');
       if (!token) {
         navigate('/login');
-        return false;
+        return false;   
       }
-      const response = await axios.get('http://localhost:5000/api/subscriptions/status', {
+      const response = await axios.get(`${API_BASE_URL}/api/subscriptions/status`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       return response.data.isSubscribed;
@@ -362,7 +362,7 @@ const InstagramReel = () => {
 
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.post('http://localhost:5000/api/download-reel', 
+      const response = await axios.post(`${API_BASE_URL}/api/download-reel`,  
         { 
           reelUrl: link,
           cleanMetadata: cleanMetadata

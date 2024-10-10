@@ -109,7 +109,7 @@ import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import './UserProfile.css';
 
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'https://vidcleaner-production.up.railway.app';
 
 const UserProfile = () => {
   const [user, setUser] = useState(null);

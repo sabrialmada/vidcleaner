@@ -165,7 +165,8 @@ const Register = ({ setUserEmail }) => {
     try {
       console.log('Attempting registration for:', email);
       console.log('Password being sent:', password); // New console log
-      const res = await axios.post('http://localhost:5000/api/auth/register', { email, password });
+      const res = await axios.post(`${API_BASE_URL}/api/auth/register`, { email, password });
+      
   
       console.log('Registration response:', res.data);
       const { accessToken, email: registeredEmail } = res.data;
