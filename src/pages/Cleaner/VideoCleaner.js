@@ -607,6 +607,7 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import './VideoCleaner.css';
+import { API_BASE_URL } from '../../config';
 
 const VideoCleaner = () => {
   const [fileNames, setFileNames] = useState([]);
