@@ -308,9 +308,44 @@ router.post('/create', authenticateToken, limiter, async (req, res) => {
     });
   } catch (error) {
     logger.error('Subscription creation error:', { userId: req.user.id, error: error.message });
-    res.status(500).json({ message: 'Error creating subscription', error: error.message });
+    res.status(500).json({ error: 'Error creating subscription' });
   }
 });
+
+// Confirm subscription
+router.post('/confirm', authenticateToken, limiter, async (req, res) => {
+    try {
+      logger.info('Confirming subscription for user:', { userId: req.user.id });
+      const { subscriptionId } = req.body;
+      const user = await User.findById(req.user.id);
+  
+      if (!user) {
+        logger.warn('User not found in database', { userId: req.user.id });
+        return res.status(404).json({ message: 'User not found' });
+      }
+  
+      if (user.stripeSubscriptionId !== subscriptionId) {
+        logger.warn('Subscription ID mismatch', { userId: req.user.id, providedSubId: subscriptionId, userSubId: user.stripeSubscriptionId });
+        return res.status(400).json({ message: 'Invalid subscription ID' });
+      }
+  
+      // Here you might want to check the status with Stripe
+      const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  
+      if (subscription.status === 'active') {
+        user.subscriptionStatus = 'active';
+        await user.save();
+        logger.info('Subscription confirmed successfully', { userId: user.id, subscriptionId });
+        res.json({ message: 'Subscription confirmed successfully' });
+      } else {
+        logger.warn('Subscription not active in Stripe', { userId: user.id, subscriptionId, status: subscription.status });
+        res.status(400).json({ message: 'Subscription is not active' });
+      }
+    } catch (error) {
+      logger.error('Error confirming subscription:', { userId: req.user.id, error: error.message });
+      res.status(500).json({ message: 'Error confirming subscription' });
+    }
+  });
 
 // Cancel subscription
 router.post('/cancel', authenticateToken, limiter, async (req, res) => {
