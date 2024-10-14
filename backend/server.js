@@ -542,12 +542,47 @@ app.use('/api/auth', authRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/user', userRoutes);
 
-app.use((err, req, res, next) => {
+/* app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(err.status || 500).json({
     message: err.message || 'Something went wrong!',
     error: process.env.NODE_ENV === 'production' ? {} : err
   });
+}); */
+
+app.use((err, req, res, next) => {
+  // Log the error
+  console.error('Error:', err.message);
+  console.error('Stack:', err.stack);
+
+  // Determine if we're in production
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  // Set the status code
+  const statusCode = err.status || 500;
+
+  // Prepare the error response
+  const errorResponse = {
+    message: isProduction ? 'An unexpected error occurred' : err.message,
+    error: isProduction ? {} : {
+      status: statusCode,
+      stack: err.stack
+    }
+  };
+
+  // If it's a validation error, add more details
+  if (err.name === 'ValidationError') {
+    errorResponse.details = Object.values(err.errors).map(error => error.message);
+  }
+
+  // Send the response
+  res.status(statusCode).json(errorResponse);
+
+  // If it's a critical error, you might want to do something more
+  if (statusCode === 500) {
+    // TODO: Send to error monitoring service
+    // Example: Sentry.captureException(err);
+  }
 });
 
 app.use((req, res) => {
