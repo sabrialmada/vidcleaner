@@ -253,7 +253,7 @@ module.exports = {
 // FOR PRODUCTION
 
 
-const ffmpeg = require('fluent-ffmpeg');
+/* const ffmpeg = require('fluent-ffmpeg');
 const crypto = require('crypto');
 const fs = require('fs').promises;
 const path = require('path');
@@ -361,6 +361,119 @@ async function processVideo(inputPath, outputPath) {
   } catch (error) {
     console.error('Error processing video:', error);
     throw error;
+  }
+}
+
+module.exports = {
+  processVideo
+}; */
+
+
+const ffmpeg = require('fluent-ffmpeg');
+const crypto = require('crypto');
+const fs = require('fs').promises;
+const path = require('path');
+
+function ffmpegPromise(inputPath, outputPath, operation) {
+  return new Promise((resolve, reject) => {
+    const command = ffmpeg(inputPath);
+    operation(command);
+    command
+      .outputOptions('-preset', 'ultrafast')
+      .save(outputPath)
+      .on('start', commandLine => {
+        console.log(`FFmpeg command: ${commandLine}`);
+      })
+      .on('progress', progress => {
+        console.log(`Processing: ${progress.percent}% done`);
+      })
+      .on('end', () => {
+        console.log(`FFmpeg operation completed: ${outputPath}`);
+        resolve();
+      })
+      .on('error', (err, stdout, stderr) => {
+        console.error('FFmpeg error:', err.message);
+        console.error('FFmpeg stdout:', stdout);
+        console.error('FFmpeg stderr:', stderr);
+        reject(err);
+      });
+  });
+}
+
+function removeMetadata(inputPath, outputPath) {
+  return ffmpegPromise(inputPath, outputPath, command => {
+    command.outputOptions('-map_metadata', '-1');
+  });
+}
+
+async function generateMD5(filePath) {
+  const hash = crypto.createHash('md5');
+  const data = await fs.readFile(filePath);
+  hash.update(data);
+  return hash.digest('hex');
+}
+
+function modifyVideo(inputPath, outputPath) {
+  const scaleFactor = (Math.random() * (1.03 - 1.01) + 1.01).toFixed(2);
+  const cropValue = Math.floor(Math.random() * 5) + 1;
+  
+  return ffmpegPromise(inputPath, outputPath, command => {
+    command.videoFilter(`scale=iw*${scaleFactor}:ih*${scaleFactor}, crop=iw-${cropValue}:ih-${cropValue}`);
+  });
+}
+
+function adjustAudio(inputPath, outputPath) {
+  return ffmpegPromise(inputPath, outputPath, command => {
+    command.audioFilters('asetrate=44100*1.02,aresample=44100');
+  });
+}
+
+function changeColorSpace(inputPath, outputPath) {
+  const colorSpaces = ['bt709', 'smpte240m', 'bt2020'];
+  const randomColorSpace = colorSpaces[Math.floor(Math.random() * colorSpaces.length)];
+  
+  return ffmpegPromise(inputPath, outputPath, command => {
+    command.videoFilter(`colorspace=all=${randomColorSpace}:iall=bt709`);
+  });
+}
+
+function reencodeVideo(inputPath, outputPath) {
+  return ffmpegPromise(inputPath, outputPath, command => {
+    command.videoCodec('libx264').outputOptions('-preset', 'slow', '-crf', '18');
+  });
+}
+
+async function processVideo(inputPath, outputPath) {
+  const tempFiles = [];
+  try {
+    console.log(`Starting video processing: ${inputPath}`);
+    const tempFile1 = path.join(__dirname, 'temp_video_1.mp4');
+    const tempFile2 = path.join(__dirname, 'temp_video_2.mp4');
+    tempFiles.push(tempFile1, tempFile2);
+
+    await removeMetadata(inputPath, tempFile1);
+    await modifyVideo(tempFile1, tempFile2);
+    await adjustAudio(tempFile2, tempFile1);
+    await reencodeVideo(tempFile1, tempFile2);
+    await changeColorSpace(tempFile2, outputPath);
+
+    const md5Hash = await generateMD5(outputPath);
+    console.log(`MD5 Hash of processed video: ${md5Hash}`);
+
+    console.log('Video processing completed.');
+  } catch (error) {
+    console.error('Error processing video:', error);
+    throw error;
+  } finally {
+    // Clean up temp files
+    for (const file of tempFiles) {
+      try {
+        await fs.unlink(file);
+        console.log(`Temporary file deleted: ${file}`);
+      } catch (unlinkError) {
+        console.error(`Error deleting temporary file: ${file}`, unlinkError);
+      }
+    }
   }
 }
 
