@@ -782,7 +782,7 @@ module.exports = router;
  */
 
 
-const express = require('express');
+/* const express = require('express');
 const puppeteer = require('puppeteer');
 const path = require('path');
 const fs = require('fs').promises;
@@ -953,6 +953,226 @@ async function downloadInstagramReel(req, res) {
         console.error(`Stack trace: ${error.stack}`);
         if (!res.headersSent) {
             res.status(500).json({ message: 'Error downloading the reel.', error: error.message });
+        }
+    } finally {
+        if (browser) {
+            console.log('Closing browser');
+            await browser.close();
+        }
+    }
+}
+
+// Route to handle download requests
+router.post('/download-reel', async (req, res) => {
+    const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Operation timed out')), 300000) // 5 minutes
+    );
+
+    try {
+        await Promise.race([downloadInstagramReel(req, res), timeoutPromise]);
+    } catch (error) {
+        if (error.message === 'Operation timed out') {
+            console.error('The operation timed out');
+            if (!res.headersSent) {
+                res.status(504).json({ message: 'The operation timed out.' });
+            }
+        } else {
+            console.error(`Unexpected error: ${error.message}`);
+            console.error(error.stack);
+            if (!res.headersSent) {
+                res.status(500).json({ message: 'An unexpected error occurred.', error: error.message });
+            }
+        }
+    }
+});
+
+module.exports = router; */
+
+
+const express = require('express');
+const puppeteer = require('puppeteer');
+const path = require('path');
+const fs = require('fs').promises;
+const { processVideo } = require('../videoProcessor');
+
+const router = express.Router();
+
+// Function to validate Instagram Reel URL
+const isValidInstagramUrl = (url) => {
+    const regex = /^(https?:\/\/)?(www\.)?instagram\.com\/reel\/[A-Za-z0-9_-]+\/?(?:\?.*)?$/;
+    return regex.test(url);
+};
+
+// Main function to download Instagram Reel
+async function downloadInstagramReel(req, res) {
+    console.log('Starting Instagram reel download process');
+    const reelUrl = req.body.reelUrl;
+    const cleanMetadata = req.body.cleanMetadata;
+    console.log(`Reel URL: ${reelUrl}`);
+    console.log(`Clean metadata option: ${cleanMetadata}`);
+
+    if (!isValidInstagramUrl(reelUrl)) {
+        console.log('Invalid Instagram reel URL');
+        return res.status(400).json({ message: 'Invalid Instagram reel URL.' });
+    }
+
+    let browser;
+    let tempFilePath;
+    let outputFilePath;
+
+    try {
+        console.log('Launching browser');
+        browser = await puppeteer.launch({
+            headless: "new",
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu',
+                '--no-first-run',
+                '--no-zygote',
+                '--single-process',
+                '--disable-background-networking',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-breakpad',
+                '--disable-client-side-phishing-detection',
+                '--disable-default-apps',
+                '--disable-extensions',
+                '--disable-hang-monitor',
+                '--disable-popup-blocking',
+                '--disable-prompt-on-repost',
+                '--disable-sync',
+                '--disable-translate',
+                '--metrics-recording-only',
+                '--mute-audio',
+                '--no-pings',
+                '--disable-component-update',
+                '--disable-features=TranslateUI',
+                '--disable-features=site-per-process',
+                '--disable-web-security'
+            ],
+            defaultViewport: null,
+            ignoreHTTPSErrors: true,
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium'
+        });
+
+        const page = await browser.newPage();
+        await page.setDefaultNavigationTimeout(60000);
+        console.log('New page created');
+
+        try {
+            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+            console.log('User agent set');
+
+            let attempt = 0;
+            const maxAttempts = 5;
+            let success = false;
+
+            while (!success && attempt < maxAttempts) {
+                try {
+                    console.log(`Attempt ${attempt + 1} to navigate to reel URL`);
+                    await page.goto(reelUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+                    success = true;
+                    console.log('Successfully navigated to reel URL');
+                } catch (e) {
+                    console.log(`Attempt ${attempt + 1} failed, retrying...`);
+                    attempt++;
+                    if (attempt === maxAttempts) {
+                        throw e;
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds before retrying
+                }
+            }
+
+            console.log('Extracting video URL');
+            const videoUrl = await page.evaluate(() => {
+                const videoElement = document.querySelector('video');
+                if (videoElement) return videoElement.src;
+                
+                const sourceElement = document.querySelector('source[type="video/mp4"]');
+                if (sourceElement) return sourceElement.src;
+                
+                const metaElement = document.querySelector('meta[property="og:video"]');
+                if (metaElement) return metaElement.content;
+                
+                return null;
+            });
+
+            if (!videoUrl) {
+                console.log('Unable to find video on the page');
+                return res.status(400).json({ message: 'Unable to find the video on the page.' });
+            }
+            console.log(`Video URL found: ${videoUrl}`);
+
+            console.log('Downloading video buffer');
+            const videoBuffer = await page.evaluate(async (videoUrl) => {
+                const response = await fetch(videoUrl);
+                const buffer = await response.arrayBuffer();
+                return Array.from(new Uint8Array(buffer));
+            }, videoUrl);
+
+            const buffer = Buffer.from(videoBuffer);
+            
+            tempFilePath = path.join(__dirname, '../uploads', `temp_reel_${Date.now()}.mp4`);
+            console.log(`Saving temporary file: ${tempFilePath}`);
+            await fs.writeFile(tempFilePath, buffer);
+
+            if (cleanMetadata) {
+                console.log('Cleaning metadata requested, processing video');
+                outputFilePath = path.join(__dirname, '../uploads', `processed_reel_${Date.now()}.mp4`);
+                console.log(`Processing video, output file: ${outputFilePath}`);
+                await processVideo(tempFilePath, outputFilePath);
+
+                console.log('Sending processed video to client');
+                res.download(outputFilePath, 'processed_reel.mp4', async (err) => {
+                    if (err) {
+                        console.error('Error sending the processed file:', err);
+                    }
+                    console.log('Cleaning up temporary files');
+                    try {
+                        await fs.unlink(tempFilePath);
+                        await fs.unlink(outputFilePath);
+                        console.log('Temporary files deleted');
+                    } catch (unlinkError) {
+                        console.error('Error deleting temporary files:', unlinkError);
+                    }
+                });
+            } else {
+                console.log('Sending original video to client without processing');
+                res.download(tempFilePath, 'reel.mp4', async (err) => {
+                    if (err) {
+                        console.error('Error sending the file:', err);
+                    }
+                    console.log('Cleaning up temporary file');
+                    try {
+                        await fs.unlink(tempFilePath);
+                        console.log('Temporary file deleted');
+                    } catch (unlinkError) {
+                        console.error('Error deleting temporary file:', unlinkError);
+                    }
+                });
+            }
+        } catch (pageError) {
+            console.error(`Error in page operations: ${pageError.message}`);
+            console.error(pageError.stack);
+            throw pageError;
+        } finally {
+            await page.close();
+            console.log('Page closed');
+        }
+    } catch (error) {
+        console.error(`Error downloading the reel: ${error.message}`);
+        console.error(`Stack trace: ${error.stack}`);
+        let errorMessage = 'Error downloading the reel.';
+        if (error.name === 'TimeoutError') {
+            errorMessage = 'The operation timed out. Please try again.';
+        } else if (error.message.includes('net::ERR_NAME_NOT_RESOLVED')) {
+            errorMessage = 'Unable to connect to Instagram. Please check your internet connection.';
+        }
+        if (!res.headersSent) {
+            res.status(500).json({ message: errorMessage, error: error.message });
         }
     } finally {
         if (browser) {
