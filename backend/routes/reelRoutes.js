@@ -1088,16 +1088,30 @@ async function downloadInstagramReel(req, res) {
 
             console.log('Extracting video URL');
             const videoUrl = await page.evaluate(() => {
-                const videoElement = document.querySelector('video');
-                if (videoElement) return videoElement.src;
-                
-                const sourceElement = document.querySelector('source[type="video/mp4"]');
-                if (sourceElement) return sourceElement.src;
-                
-                const metaElement = document.querySelector('meta[property="og:video"]');
-                if (metaElement) return metaElement.content;
-                
-                return null;
+                return new Promise((resolve) => {
+                    const videoElement = document.querySelector('video');
+                    if (videoElement) {
+                        videoElement.pause();
+                        resolve(videoElement.src);
+                    } else {
+                        const observer = new MutationObserver(() => {
+                            const video = document.querySelector('video');
+                            if (video) {
+                                observer.disconnect();
+                                video.pause();
+                                resolve(video.src);
+                            }
+                        });
+                        observer.observe(document.body, {
+                            childList: true,
+                            subtree: true
+                        });
+                        setTimeout(() => {
+                            observer.disconnect();
+                            resolve(null);
+                        }, 10000); // 10 second timeout
+                    }
+                });
             });
 
             if (!videoUrl) {
@@ -1107,13 +1121,17 @@ async function downloadInstagramReel(req, res) {
             console.log(`Video URL found: ${videoUrl}`);
 
             console.log('Downloading video buffer');
-            const videoBuffer = await page.evaluate(async (videoUrl) => {
-                const response = await fetch(videoUrl);
-                const buffer = await response.arrayBuffer();
-                return Array.from(new Uint8Array(buffer));
-            }, videoUrl);
+            const client = await page.target().createCDPSession();
+            await client.send('Network.enable');
+            
+            const videoData = await client.send('Network.getResponseBody', {
+                requestId: await page.evaluate(async (url) => {
+                    const r = await fetch(url);
+                    return r.headers.get('x-moz-request-id');
+                }, videoUrl)
+            });
 
-            const buffer = Buffer.from(videoBuffer);
+            const buffer = Buffer.from(videoData.body, 'base64');
             
             tempFilePath = path.join(__dirname, '../uploads', `temp_reel_${Date.now()}.mp4`);
             console.log(`Saving temporary file: ${tempFilePath}`);
