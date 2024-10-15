@@ -7,20 +7,20 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Set the working directory in the container
-WORKDIR /usr/src/app
+# Set the working directory for the backend
+WORKDIR /usr/src/app/backend
 
-# Copy package.json and package-lock.json
+# Copy backend package.json and package-lock.json
 COPY backend/package*.json ./
 
-# Install dependencies
+# Install backend dependencies
 RUN npm install
 
-# Copy the backend code
+# Copy backend files
 COPY backend/ .
 
-# Make port 5000 available to the world outside this container
+# Expose the port the app runs on
 EXPOSE 5000
 
-# Run the app when the container launches
+# Command to run the backend
 CMD ["node", "server.js"]
