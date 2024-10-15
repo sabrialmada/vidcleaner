@@ -487,17 +487,6 @@ const fs = require('fs').promises;
 const path = require('path');
 const { execSync } = require('child_process');
 
-// Set the FFmpeg path
-ffmpeg.setFfmpegPath('/usr/local/bin/ffmpeg');
-
-// Check FFmpeg installation
-try {
-  const ffmpegVersion = execSync('/usr/local/bin/ffmpeg -version').toString();
-  console.log('FFmpeg version:', ffmpegVersion.split('\n')[0]);
-} catch (error) {
-  console.error('FFmpeg is not installed or not accessible:', error);
-  process.exit(1);
-}
 
 function ffmpegPromise(inputPath, outputPath, operation) {
   return new Promise((resolve, reject) => {
