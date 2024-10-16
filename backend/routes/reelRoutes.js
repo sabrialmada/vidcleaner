@@ -1021,8 +1021,10 @@ async function downloadInstagramReel(req, res) {
     const outputPath = path.join(__dirname, '../uploads', `instagram_reel_${Date.now()}.mp4`);
 
     try {
-        console.log('Downloading reel using youtube-dl');
-        await execPromise(`youtube-dl -o "${outputPath}" "${reelUrl}"`);
+        console.log('Downloading reel using yt-dlp');
+        const { stdout, stderr } = await execPromise(`yt-dlp --version && yt-dlp -o "${outputPath}" "${reelUrl}"`);
+        console.log('yt-dlp output:', stdout);
+        if (stderr) console.error('yt-dlp stderr:', stderr);
         console.log('Download completed');
 
         let finalOutputPath = outputPath;
@@ -1053,7 +1055,7 @@ async function downloadInstagramReel(req, res) {
 
     } catch (error) {
         console.error(`Error downloading the reel: ${error.message}`);
-        console.error(`Stack trace: ${error.stack}`);
+        console.error(`Error details:`, error);
         let errorMessage = 'Error downloading the reel.';
         if (error.message.includes('This video is unavailable')) {
             errorMessage = 'This Instagram Reel is unavailable. It might be private or deleted.';
