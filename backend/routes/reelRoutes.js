@@ -1028,30 +1028,8 @@ async function downloadInstagramReel(req, res) {
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--disable-gpu',
-                '--no-first-run',
-                '--no-zygote',
-                '--single-process',
-                '--disable-background-networking',
-                '--disable-background-timer-throttling',
-                '--disable-backgrounding-occluded-windows',
-                '--disable-breakpad',
-                '--disable-client-side-phishing-detection',
-                '--disable-default-apps',
-                '--disable-extensions',
-                '--disable-hang-monitor',
-                '--disable-popup-blocking',
-                '--disable-prompt-on-repost',
-                '--disable-sync',
-                '--disable-translate',
-                '--metrics-recording-only',
-                '--mute-audio',
-                '--no-pings',
-                '--disable-component-update',
-                '--disable-features=TranslateUI',
-                '--disable-features=site-per-process',
-                '--disable-web-security'
+                '--disable-web-security',
+                '--disable-features=IsolateOrigins,site-per-process'
             ],
             defaultViewport: null,
             ignoreHTTPSErrors: true,
@@ -1062,80 +1040,61 @@ async function downloadInstagramReel(req, res) {
         await page.setDefaultNavigationTimeout(60000);
         console.log('New page created');
 
+        // Enable request interception
+        await page.setRequestInterception(true);
+
+        let videoBuffer = null;
+        page.on('request', request => {
+            request.continue();
+        });
+
+        page.on('response', async response => {
+            const url = response.url();
+            const contentType = response.headers()['content-type'];
+            if (contentType && contentType.includes('video')) {
+                console.log('Video response intercepted:', url);
+                videoBuffer = await response.buffer();
+            }
+        });
+
         try {
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
             console.log('User agent set');
 
-            let attempt = 0;
-            const maxAttempts = 5;
-            let success = false;
+            console.log('Navigating to reel URL');
+            await page.goto(reelUrl, { waitUntil: 'networkidle0', timeout: 60000 });
+            console.log('Successfully navigated to reel URL');
 
-            while (!success && attempt < maxAttempts) {
-                try {
-                    console.log(`Attempt ${attempt + 1} to navigate to reel URL`);
-                    await page.goto(reelUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-                    success = true;
-                    console.log('Successfully navigated to reel URL');
-                } catch (e) {
-                    console.log(`Attempt ${attempt + 1} failed, retrying...`);
-                    attempt++;
-                    if (attempt === maxAttempts) {
-                        throw e;
-                    }
-                    await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds before retrying
-                }
-            }
+            // Wait for the video to load
+            await page.waitForSelector('video', { timeout: 10000 });
+            console.log('Video element found');
 
-            console.log('Extracting video URL');
-            const videoUrl = await page.evaluate(() => {
+            // Ensure video is loaded
+            await page.evaluate(() => {
                 return new Promise((resolve) => {
-                    const videoElement = document.querySelector('video');
-                    if (videoElement) {
-                        videoElement.pause();
-                        resolve(videoElement.src);
+                    const video = document.querySelector('video');
+                    if (video.readyState >= 3) {
+                        resolve();
                     } else {
-                        const observer = new MutationObserver(() => {
-                            const video = document.querySelector('video');
-                            if (video) {
-                                observer.disconnect();
-                                video.pause();
-                                resolve(video.src);
-                            }
-                        });
-                        observer.observe(document.body, {
-                            childList: true,
-                            subtree: true
-                        });
-                        setTimeout(() => {
-                            observer.disconnect();
-                            resolve(null);
-                        }, 10000); // 10 second timeout
+                        video.addEventListener('canplay', resolve, { once: true });
                     }
                 });
             });
 
-            if (!videoUrl) {
-                console.log('Unable to find video on the page');
-                return res.status(400).json({ message: 'Unable to find the video on the page.' });
+            if (!videoBuffer) {
+                console.log('Video buffer not captured, waiting for 5 seconds');
+                await new Promise(resolve => setTimeout(resolve, 5000));
             }
-            console.log(`Video URL found: ${videoUrl}`);
 
-            console.log('Downloading video buffer');
-            const client = await page.target().createCDPSession();
-            await client.send('Network.enable');
-            
-            const videoData = await client.send('Network.getResponseBody', {
-                requestId: await page.evaluate(async (url) => {
-                    const r = await fetch(url);
-                    return r.headers.get('x-moz-request-id');
-                }, videoUrl)
-            });
+            if (!videoBuffer) {
+                throw new Error('Failed to capture video content');
+            }
 
-            const buffer = Buffer.from(videoData.body, 'base64');
+            console.log('Video buffer captured successfully');
             
             tempFilePath = path.join(__dirname, '../uploads', `temp_reel_${Date.now()}.mp4`);
             console.log(`Saving temporary file: ${tempFilePath}`);
-            await fs.writeFile(tempFilePath, buffer);
+            await fs.writeFile(tempFilePath, videoBuffer);
 
             if (cleanMetadata) {
                 console.log('Cleaning metadata requested, processing video');
