@@ -994,6 +994,8 @@ const puppeteer = require('puppeteer');
 const path = require('path');
 const fs = require('fs').promises;
 const { processVideo } = require('../videoProcessor');
+const { execFile } = require('child_process');
+const ffmpegPath = require('ffmpeg-static');
 
 const router = express.Router();
 
@@ -1027,13 +1029,11 @@ async function downloadInstagramReel(req, res) {
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
                 '--disable-web-security',
                 '--disable-features=IsolateOrigins,site-per-process'
             ],
             defaultViewport: null,
             ignoreHTTPSErrors: true,
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium'
         });
 
         const page = await browser.newPage();
@@ -1043,7 +1043,8 @@ async function downloadInstagramReel(req, res) {
         // Enable request interception
         await page.setRequestInterception(true);
 
-        let videoBuffer = null;
+        let videoChunks = [];
+        let audioChunks = [];
         page.on('request', request => {
             request.continue();
         });
@@ -1053,7 +1054,12 @@ async function downloadInstagramReel(req, res) {
             const contentType = response.headers()['content-type'];
             if (contentType && contentType.includes('video')) {
                 console.log('Video response intercepted:', url);
-                videoBuffer = await response.buffer();
+                const buffer = await response.buffer();
+                if (url.includes('dash_hfr_q90') || url.includes('dash_r2evevp9')) {
+                    videoChunks.push(buffer);
+                } else if (url.includes('dash_ln_heaac_vbr3_audio')) {
+                    audioChunks.push(buffer);
+                }
             }
         });
 
@@ -1081,56 +1087,68 @@ async function downloadInstagramReel(req, res) {
                 });
             });
 
-            if (!videoBuffer) {
-                console.log('Video buffer not captured, waiting for 5 seconds');
-                await new Promise(resolve => setTimeout(resolve, 5000));
-            }
+            console.log('Video loaded, waiting for 5 seconds to capture all chunks');
+            await new Promise(resolve => setTimeout(resolve, 5000));
 
-            if (!videoBuffer) {
+            if (videoChunks.length === 0 && audioChunks.length === 0) {
                 throw new Error('Failed to capture video content');
             }
 
-            console.log('Video buffer captured successfully');
+            console.log(`Video chunks captured: ${videoChunks.length}, Audio chunks captured: ${audioChunks.length}`);
             
-            tempFilePath = path.join(__dirname, '../uploads', `temp_reel_${Date.now()}.mp4`);
-            console.log(`Saving temporary file: ${tempFilePath}`);
-            await fs.writeFile(tempFilePath, videoBuffer);
+            const videoBuffer = Buffer.concat(videoChunks);
+            const audioBuffer = Buffer.concat(audioChunks);
+            
+            tempFilePath = path.join(__dirname, '../uploads', `temp_reel_${Date.now()}`);
+            const videoPath = `${tempFilePath}_video.mp4`;
+            const audioPath = `${tempFilePath}_audio.mp4`;
+            outputFilePath = path.join(__dirname, '../uploads', `processed_reel_${Date.now()}.mp4`);
+
+            await fs.writeFile(videoPath, videoBuffer);
+            await fs.writeFile(audioPath, audioBuffer);
+
+            // Use FFmpeg to combine video and audio
+            await new Promise((resolve, reject) => {
+                execFile(ffmpegPath, [
+                    '-i', videoPath,
+                    '-i', audioPath,
+                    '-c', 'copy',
+                    outputFilePath
+                ], (error) => {
+                    if (error) {
+                        console.error('FFmpeg error:', error);
+                        reject(error);
+                    } else {
+                        resolve();
+                    }
+                });
+            });
+
+            console.log('Video processing completed');
 
             if (cleanMetadata) {
                 console.log('Cleaning metadata requested, processing video');
-                outputFilePath = path.join(__dirname, '../uploads', `processed_reel_${Date.now()}.mp4`);
-                console.log(`Processing video, output file: ${outputFilePath}`);
-                await processVideo(tempFilePath, outputFilePath);
-
-                console.log('Sending processed video to client');
-                res.download(outputFilePath, 'processed_reel.mp4', async (err) => {
-                    if (err) {
-                        console.error('Error sending the processed file:', err);
-                    }
-                    console.log('Cleaning up temporary files');
-                    try {
-                        await fs.unlink(tempFilePath);
-                        await fs.unlink(outputFilePath);
-                        console.log('Temporary files deleted');
-                    } catch (unlinkError) {
-                        console.error('Error deleting temporary files:', unlinkError);
-                    }
-                });
-            } else {
-                console.log('Sending original video to client without processing');
-                res.download(tempFilePath, 'reel.mp4', async (err) => {
-                    if (err) {
-                        console.error('Error sending the file:', err);
-                    }
-                    console.log('Cleaning up temporary file');
-                    try {
-                        await fs.unlink(tempFilePath);
-                        console.log('Temporary file deleted');
-                    } catch (unlinkError) {
-                        console.error('Error deleting temporary file:', unlinkError);
-                    }
-                });
+                const cleanedFilePath = `${outputFilePath}_cleaned.mp4`;
+                await processVideo(outputFilePath, cleanedFilePath);
+                outputFilePath = cleanedFilePath;
             }
+
+            console.log('Sending processed video to client');
+            res.download(outputFilePath, 'instagram_reel.mp4', async (err) => {
+                if (err) {
+                    console.error('Error sending the file:', err);
+                }
+                console.log('Cleaning up temporary files');
+                try {
+                    await fs.unlink(videoPath);
+                    await fs.unlink(audioPath);
+                    await fs.unlink(outputFilePath);
+                    console.log('Temporary files deleted');
+                } catch (unlinkError) {
+                    console.error('Error deleting temporary files:', unlinkError);
+                }
+            });
+
         } catch (pageError) {
             console.error(`Error in page operations: ${pageError.message}`);
             console.error(pageError.stack);
