@@ -1002,6 +1002,11 @@ const ffmpegPath = require('ffmpeg-static');
 const router = express.Router();
 
 // Function to validate Instagram Reel URL
+const isValidInstagramUrl = (url) => {
+    const regex = /^(https?:\/\/)?(www\.)?instagram\.com\/reel\/[A-Za-z0-9_-]+\/?(?:\?.*)?$/;
+    return regex.test(url);
+};
+
 async function downloadInstagramReel(req, res) {
     console.log('Starting Instagram reel download process');
     const reelUrl = req.body.reelUrl;
@@ -1015,7 +1020,7 @@ async function downloadInstagramReel(req, res) {
     }
 
     const tempOutputPath = path.join(__dirname, '../uploads', `temp_reel_${Date.now()}.mp4`);
-    const finalOutputPath = path.join(__dirname, '../uploads', `instagram_reel_${Date.now()}.mp4`);
+    let finalOutputPath = path.join(__dirname, '../uploads', `instagram_reel_${Date.now()}.mp4`);
 
     try {
         console.log('Downloading reel using yt-dlp');
