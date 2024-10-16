@@ -1,8 +1,8 @@
 FROM node:20
 
-# Install FFmpeg and Chromium
+# Install FFmpeg, Chromium, and youtube-dl
 RUN apt-get update && \
-    apt-get install -y ffmpeg chromium && \
+    apt-get install -y ffmpeg chromium youtube-dl && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
