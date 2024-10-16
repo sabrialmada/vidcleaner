@@ -146,13 +146,16 @@ const { processVideo, safeDelete } = require('../videoProcessor');
 
 const router = express.Router();
 
-// Multer setup for file uploads (temporary storage for uploaded files)
-const upload = multer({ dest: 'uploads/' });
+// Multer setup for file uploads
+const upload = multer({ 
+  dest: 'uploads/',
+  limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
+});
 
-// API for video processing
 router.post('/process-videos', upload.array('videos', 10), async (req, res) => {
   const processedFiles = [];
   const filesToCleanup = [];
+  const errors = [];
 
   try {
     const videoFiles = req.files;
@@ -160,25 +163,30 @@ router.post('/process-videos', upload.array('videos', 10), async (req, res) => {
       return res.status(400).json({ message: 'No video files uploaded' });
     }
 
-    // Process each video file
     for (const videoFile of videoFiles) {
       const inputFilePath = path.join(__dirname, '../uploads', videoFile.filename);
       const outputFilePath = path.join(__dirname, '../uploads', `processed_${videoFile.filename}.mp4`);
 
-      filesToCleanup.push(inputFilePath);
-      filesToCleanup.push(outputFilePath);
+      filesToCleanup.push(inputFilePath, outputFilePath);
 
-      // Process the video
-      await processVideo(inputFilePath, outputFilePath);
-
-      // Add the processed file to the list
-      processedFiles.push({ path: outputFilePath, name: `processed_${videoFile.originalname}` });
-
-      // Clean up the original uploaded file
-      await safeDelete(inputFilePath);
+      try {
+        const md5Hash = await processVideo(inputFilePath, outputFilePath);
+        processedFiles.push({ 
+          path: outputFilePath, 
+          name: `processed_${videoFile.originalname}`,
+          md5Hash
+        });
+        await safeDelete(inputFilePath);
+      } catch (error) {
+        console.error(`Error processing ${videoFile.originalname}:`, error);
+        errors.push(`Failed to process ${videoFile.originalname}: ${error.message}`);
+      }
     }
 
-    // Create a zip archive for the processed videos
+    if (processedFiles.length === 0) {
+      throw new Error('No videos were successfully processed');
+    }
+
     const zipFilePath = path.join(__dirname, '../uploads', `processed_videos_${Date.now()}.zip`);
     filesToCleanup.push(zipFilePath);
 
@@ -187,13 +195,13 @@ router.post('/process-videos', upload.array('videos', 10), async (req, res) => {
 
     archive.pipe(output);
 
-    // Add processed files to the zip
     for (const file of processedFiles) {
       try {
         await fs.access(file.path, fs.constants.R_OK);
         archive.file(file.path, { name: file.name });
       } catch (error) {
         console.error(`Error accessing file ${file.path}:`, error);
+        errors.push(`Failed to add ${file.name} to zip: ${error.message}`);
       }
     }
 
@@ -208,16 +216,21 @@ router.post('/process-videos', upload.array('videos', 10), async (req, res) => {
       if (err) {
         console.error('Error sending the zip file:', err);
       }
-
-      // Cleanup after sending the file
       await cleanupFiles(filesToCleanup);
     });
 
+    if (errors.length > 0) {
+      console.warn('Some errors occurred during processing:', errors);
+      // You might want to send these errors to the client as well
+    }
+
   } catch (error) {
     console.error('Error processing videos:', error);
-    res.status(500).json({ message: 'Video processing failed', error: error.message });
-
-    // Cleanup any remaining files on error
+    res.status(500).json({ 
+      message: 'Video processing failed', 
+      error: error.message,
+      details: errors
+    });
     await cleanupFiles(filesToCleanup);
   }
 });

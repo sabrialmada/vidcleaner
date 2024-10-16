@@ -485,7 +485,7 @@ const ffmpeg = require('fluent-ffmpeg');
 const crypto = require('crypto');
 const fs = require('fs').promises;
 const path = require('path');
-const { execSync } = require('child_process');
+
 
 
 function ffmpegPromise(inputPath, outputPath, operation) {
@@ -499,7 +499,7 @@ function ffmpegPromise(inputPath, outputPath, operation) {
         console.log(`FFmpeg command: ${commandLine}`);
       })
       .on('progress', progress => {
-        console.log(`Processing: ${progress.percent}% done`);
+        console.log(`Processing: ${progress.percent ? progress.percent.toFixed(2) : 'undefined'}% done`);
       })
       .on('end', () => {
         console.log(`FFmpeg operation completed: ${outputPath}`);
@@ -579,13 +579,13 @@ async function processVideo(inputPath, outputPath) {
     await fs.access(inputPath, fs.constants.R_OK);
     console.log(`Input file exists and is readable: ${inputPath}`);
 
-    const tempDir = path.dirname(path.join(__dirname, 'temp_video_1.mp4'));
+    const tempDir = path.dirname(inputPath);
     await fs.access(tempDir, fs.constants.W_OK);
     console.log(`Temp directory is writable: ${tempDir}`);
 
     console.log(`Starting video processing: ${inputPath}`);
-    const tempFile1 = path.join(tempDir, 'temp_video_1.mp4');
-    const tempFile2 = path.join(tempDir, 'temp_video_2.mp4');
+    const tempFile1 = path.join(tempDir, `temp_video_1_${Date.now()}.mp4`);
+    const tempFile2 = path.join(tempDir, `temp_video_2_${Date.now()}.mp4`);
     tempFiles.push(tempFile1, tempFile2);
 
     await removeMetadata(inputPath, tempFile1);
@@ -598,6 +598,7 @@ async function processVideo(inputPath, outputPath) {
     console.log(`MD5 Hash of processed video: ${md5Hash}`);
 
     console.log('Video processing completed.');
+    return md5Hash;
   } catch (error) {
     console.error('Error processing video:', error);
     throw error;
@@ -606,7 +607,6 @@ async function processVideo(inputPath, outputPath) {
     for (const file of tempFiles) {
       await safeDelete(file);
     }
-    // Don't delete the input file here, handle it in the route
   }
 }
 
