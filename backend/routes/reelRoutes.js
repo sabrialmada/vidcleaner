@@ -1030,10 +1030,13 @@ async function downloadInstagramReel(req, res) {
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-web-security',
-                '--disable-features=IsolateOrigins,site-per-process'
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu'
             ],
             defaultViewport: null,
             ignoreHTTPSErrors: true,
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium'
         });
 
         const page = await browser.newPage();
@@ -1043,8 +1046,8 @@ async function downloadInstagramReel(req, res) {
         // Enable request interception
         await page.setRequestInterception(true);
 
-        let videoChunks = [];
-        let audioChunks = [];
+        let videoChunks = new Map();
+        let audioChunks = new Map();
         page.on('request', request => {
             request.continue();
         });
@@ -1054,11 +1057,17 @@ async function downloadInstagramReel(req, res) {
             const contentType = response.headers()['content-type'];
             if (contentType && contentType.includes('video')) {
                 console.log('Video response intercepted:', url);
-                const buffer = await response.buffer();
-                if (url.includes('dash_hfr_q90') || url.includes('dash_r2evevp9')) {
-                    videoChunks.push(buffer);
-                } else if (url.includes('dash_ln_heaac_vbr3_audio')) {
-                    audioChunks.push(buffer);
+                try {
+                    const buffer = await response.buffer();
+                    const urlObj = new URL(url);
+                    const byteRange = urlObj.searchParams.get('bytestart') + '-' + urlObj.searchParams.get('byteend');
+                    if (url.includes('dash_hfr_q90') || url.includes('dash_r2evevp9')) {
+                        videoChunks.set(byteRange, buffer);
+                    } else if (url.includes('dash_ln_heaac_vbr3_audio')) {
+                        audioChunks.set(byteRange, buffer);
+                    }
+                } catch (error) {
+                    console.error('Error capturing chunk:', error);
                 }
             }
         });
@@ -1072,7 +1081,7 @@ async function downloadInstagramReel(req, res) {
             console.log('Successfully navigated to reel URL');
 
             // Wait for the video to load
-            await page.waitForSelector('video', { timeout: 10000 });
+            await page.waitForSelector('video', { timeout: 30000 });
             console.log('Video element found');
 
             // Ensure video is loaded
@@ -1087,17 +1096,24 @@ async function downloadInstagramReel(req, res) {
                 });
             });
 
-            console.log('Video loaded, waiting for 5 seconds to capture all chunks');
-            await new Promise(resolve => setTimeout(resolve, 5000));
+            console.log('Video loaded, waiting for 10 seconds to capture all chunks');
+            await new Promise(resolve => setTimeout(resolve, 10000));
 
-            if (videoChunks.length === 0 && audioChunks.length === 0) {
+            if (videoChunks.size === 0 && audioChunks.size === 0) {
                 throw new Error('Failed to capture video content');
             }
 
-            console.log(`Video chunks captured: ${videoChunks.length}, Audio chunks captured: ${audioChunks.length}`);
+            console.log(`Video chunks captured: ${videoChunks.size}, Audio chunks captured: ${audioChunks.size}`);
             
-            const videoBuffer = Buffer.concat(videoChunks);
-            const audioBuffer = Buffer.concat(audioChunks);
+            const sortedVideoChunks = Array.from(videoChunks.entries()).sort((a, b) => {
+                return parseInt(a[0].split('-')[0]) - parseInt(b[0].split('-')[0]);
+            });
+            const sortedAudioChunks = Array.from(audioChunks.entries()).sort((a, b) => {
+                return parseInt(a[0].split('-')[0]) - parseInt(b[0].split('-')[0]);
+            });
+
+            const videoBuffer = Buffer.concat(sortedVideoChunks.map(chunk => chunk[1]));
+            const audioBuffer = Buffer.concat(sortedAudioChunks.map(chunk => chunk[1]));
             
             tempFilePath = path.join(__dirname, '../uploads', `temp_reel_${Date.now()}`);
             const videoPath = `${tempFilePath}_video.mp4`;
@@ -1165,6 +1181,8 @@ async function downloadInstagramReel(req, res) {
             errorMessage = 'The operation timed out. Please try again.';
         } else if (error.message.includes('net::ERR_NAME_NOT_RESOLVED')) {
             errorMessage = 'Unable to connect to Instagram. Please check your internet connection.';
+        } else if (error.message === 'Failed to capture video content') {
+            errorMessage = 'Failed to capture video content. The reel might be private or deleted.';
         }
         if (!res.headersSent) {
             res.status(500).json({ message: errorMessage, error: error.message });
