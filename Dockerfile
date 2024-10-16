@@ -1,10 +1,14 @@
 FROM node:20
 
-# Install FFmpeg, Chromium, and youtube-dl
+# Install FFmpeg, Chromium, Python3, and pip
 RUN apt-get update && \
-    apt-get install -y ffmpeg chromium youtube-dl && \
+    apt-get install -y ffmpeg chromium python3 python3-pip && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+# Install youtube-dl using pip
+RUN pip3 install youtube-dl && \
+    youtube-dl --version
 
 # Set up environment for Puppeteer
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD true
