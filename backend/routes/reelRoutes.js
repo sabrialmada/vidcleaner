@@ -996,16 +996,12 @@ const { processVideo } = require('../videoProcessor');
 const { exec } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
+const { execFile } = require('child_process');
+const ffmpegPath = require('ffmpeg-static');
 
 const router = express.Router();
 
 // Function to validate Instagram Reel URL
-const isValidInstagramUrl = (url) => {
-    const regex = /^(https?:\/\/)?(www\.)?instagram\.com\/reel\/[A-Za-z0-9_-]+\/?(?:\?.*)?$/;
-    return regex.test(url);
-};
-
-// Main function to download Instagram Reel
 async function downloadInstagramReel(req, res) {
     console.log('Starting Instagram reel download process');
     const reelUrl = req.body.reelUrl;
@@ -1018,21 +1014,44 @@ async function downloadInstagramReel(req, res) {
         return res.status(400).json({ message: 'Invalid Instagram reel URL.' });
     }
 
-    const outputPath = path.join(__dirname, '../uploads', `instagram_reel_${Date.now()}.mp4`);
+    const tempOutputPath = path.join(__dirname, '../uploads', `temp_reel_${Date.now()}.mp4`);
+    const finalOutputPath = path.join(__dirname, '../uploads', `instagram_reel_${Date.now()}.mp4`);
 
     try {
         console.log('Downloading reel using yt-dlp');
-        const { stdout, stderr } = await execPromise(`yt-dlp --version && yt-dlp -o "${outputPath}" "${reelUrl}"`);
+        const { stdout, stderr } = await execPromise(`yt-dlp -o "${tempOutputPath}" "${reelUrl}"`);
         console.log('yt-dlp output:', stdout);
         if (stderr) console.error('yt-dlp stderr:', stderr);
         console.log('Download completed');
 
-        let finalOutputPath = outputPath;
+        console.log('Re-encoding video for compatibility');
+        await new Promise((resolve, reject) => {
+            execFile(ffmpegPath, [
+                '-i', tempOutputPath,
+                '-c:v', 'libx264',
+                '-preset', 'medium',
+                '-crf', '23',
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                finalOutputPath
+            ], (error, stdout, stderr) => {
+                if (error) {
+                    console.error('FFmpeg error:', error);
+                    reject(error);
+                } else {
+                    console.log('FFmpeg output:', stdout);
+                    if (stderr) console.error('FFmpeg stderr:', stderr);
+                    resolve();
+                }
+            });
+        });
+        console.log('Re-encoding completed');
 
         if (cleanMetadata) {
             console.log('Cleaning metadata requested, processing video');
-            const cleanedFilePath = `${outputPath}_cleaned.mp4`;
-            await processVideo(outputPath, cleanedFilePath);
+            const cleanedFilePath = `${finalOutputPath}_cleaned.mp4`;
+            await processVideo(finalOutputPath, cleanedFilePath);
+            await fs.unlink(finalOutputPath);
             finalOutputPath = cleanedFilePath;
         }
 
@@ -1043,10 +1062,8 @@ async function downloadInstagramReel(req, res) {
             }
             console.log('Cleaning up temporary files');
             try {
-                await fs.unlink(outputPath);
-                if (cleanMetadata) {
-                    await fs.unlink(finalOutputPath);
-                }
+                await fs.unlink(tempOutputPath);
+                await fs.unlink(finalOutputPath);
                 console.log('Temporary files deleted');
             } catch (unlinkError) {
                 console.error('Error deleting temporary files:', unlinkError);
@@ -1054,9 +1071,9 @@ async function downloadInstagramReel(req, res) {
         });
 
     } catch (error) {
-        console.error(`Error downloading the reel: ${error.message}`);
+        console.error(`Error processing the reel: ${error.message}`);
         console.error(`Error details:`, error);
-        let errorMessage = 'Error downloading the reel.';
+        let errorMessage = 'Error processing the reel.';
         if (error.message.includes('This video is unavailable')) {
             errorMessage = 'This Instagram Reel is unavailable. It might be private or deleted.';
         } else if (error.message.includes('Unable to extract video info')) {
