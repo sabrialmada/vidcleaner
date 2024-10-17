@@ -228,7 +228,11 @@ router.post('/process-videos', upload.array('videos', 10), async (req, res) => {
 
     res.download(zipFilePath, 'processed_videos.zip', async (err) => {
       if (err) {
-        console.error('Error sending the zip file:', err);
+        if (err.code === 'ECONNABORTED') {
+          console.log('Client disconnected before download completed');
+        } else {
+          console.error('Error sending the zip file:', err);
+        }
       }
       await cleanupFiles(filesToCleanup);
     });

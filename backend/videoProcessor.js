@@ -498,7 +498,8 @@ function ffmpegPromise(inputPath, outputPath, operation) {
       })
       .on('progress', progress => {
         const percent = progress.percent ? progress.percent.toFixed(2) : 'N/A';
-        console.log(`Processing: ${percent}% done`);
+        const timemark = progress.timemark || 'N/A';
+        console.log(`Processing: ${percent}% done (Time: ${timemark})`);
       })
       .on('end', () => {
         console.log(`FFmpeg operation completed: ${outputPath}`);
@@ -508,7 +509,6 @@ function ffmpegPromise(inputPath, outputPath, operation) {
         console.error('FFmpeg error:', err.message);
         console.error('FFmpeg stdout:', stdout);
         console.error('FFmpeg stderr:', stderr);
-        console.error('FFmpeg command:', command._getArguments().join(' '));
         reject(err);
       });
   });
