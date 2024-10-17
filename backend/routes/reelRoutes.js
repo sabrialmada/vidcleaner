@@ -991,7 +991,6 @@ module.exports = router; */
 
 const express = require('express');
 const path = require('path');
-const fs = require('fs').promises;
 const { processVideo } = require('../videoProcessor');
 const { exec } = require('child_process');
 const util = require('util');
