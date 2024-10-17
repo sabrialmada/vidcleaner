@@ -1024,9 +1024,14 @@ async function downloadInstagramReel(req, res) {
 
     try {
         console.log('Downloading reel using yt-dlp');
-        const { stdout, stderr } = await execPromise(`yt-dlp -o "${tempOutputPath}" "${reelUrl}"`);
+        const ytdlpCommand = `yt-dlp -o "${tempOutputPath}" "${reelUrl}" --no-check-certificate --no-warnings --ignore-errors --no-playlist --format "best[ext=mp4]" --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"`;
+        const { stdout, stderr } = await execPromise(ytdlpCommand);
         console.log('yt-dlp output:', stdout);
         if (stderr) console.error('yt-dlp stderr:', stderr);
+
+        if (!fs.existsSync(tempOutputPath)) {
+            throw new Error('Failed to download the video file');
+        }
         console.log('Download completed');
 
         console.log('Re-encoding video for compatibility');
@@ -1083,6 +1088,8 @@ async function downloadInstagramReel(req, res) {
             errorMessage = 'This Instagram Reel is unavailable. It might be private or deleted.';
         } else if (error.message.includes('Unable to extract video info')) {
             errorMessage = 'Unable to extract video information. The reel might be private or Instagram might have changed their structure.';
+        } else if (error.message.includes('Failed to download the video file')) {
+            errorMessage = 'Failed to download the video file. The reel might be unavailable or there might be network issues.';
         }
         if (!res.headersSent) {
             res.status(500).json({ message: errorMessage, error: error.message });
