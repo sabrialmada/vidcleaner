@@ -147,9 +147,17 @@ const { processVideo, safeDelete } = require('../videoProcessor');
 
 const router = express.Router();
 
-const upload = multer({ 
+/* const upload = multer({ 
   dest: 'uploads/',
   limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
+}); */
+
+const upload = multer({ 
+  dest: 'uploads/',
+  limits: { 
+    fileSize: 300 * 1024 * 1024, // 300MB limit per file
+    fieldSize: 300 * 1024 * 1024 // 300MB limit for the entire request
+  }
 });
 
 router.post('/process-videos', upload.array('videos', 10), async (req, res) => {
@@ -161,6 +169,12 @@ router.post('/process-videos', upload.array('videos', 10), async (req, res) => {
     const videoFiles = req.files;
     if (!videoFiles || videoFiles.length === 0) {
       return res.status(400).json({ message: 'No video files uploaded' });
+    }
+
+    // Check total file size
+    const totalSize = videoFiles.reduce((acc, file) => acc + file.size, 0);
+    if (totalSize > 300 * 1024 * 1024) { // 300MB total limit
+      return res.status(400).json({ message: 'Total file size exceeds 300MB limit' });
     }
 
     for (const videoFile of videoFiles) {

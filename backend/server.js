@@ -518,7 +518,10 @@ app.use(cors({
 
 app.use('/api/subscriptions/webhook', express.raw({type: 'application/json'}));
 
-app.use(bodyParser.json());
+/* app.use(bodyParser.json()); */
+
+app.use(bodyParser.json({ limit: '300mb' }));
+app.use(bodyParser.urlencoded({ limit: '300mb', extended: true }));
 
 mongoose.connect(process.env.MONGODB_URI, {
   dbName: 'vidcleaner'
