@@ -998,6 +998,9 @@ const util = require('util');
 const execPromise = util.promisify(exec);
 const { execFile } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
+const fs = require('fs');
+const fsPromises = require('fs').promises;
+
 
 const router = express.Router();
 
@@ -1029,7 +1032,9 @@ async function downloadInstagramReel(req, res) {
         console.log('yt-dlp output:', stdout);
         if (stderr) console.error('yt-dlp stderr:', stderr);
 
-        if (!fs.existsSync(tempOutputPath)) {
+        try {
+            await fsPromises.access(tempOutputPath, fs.constants.F_OK);
+        } catch (error) {
             throw new Error('Failed to download the video file');
         }
         console.log('Download completed');
@@ -1061,7 +1066,7 @@ async function downloadInstagramReel(req, res) {
             console.log('Cleaning metadata requested, processing video');
             const cleanedFilePath = `${finalOutputPath}_cleaned.mp4`;
             await processVideo(finalOutputPath, cleanedFilePath);
-            await fs.unlink(finalOutputPath);
+            await fsPromises.unlink(finalOutputPath);
             finalOutputPath = cleanedFilePath;
         }
 
@@ -1072,8 +1077,8 @@ async function downloadInstagramReel(req, res) {
             }
             console.log('Cleaning up temporary files');
             try {
-                await fs.unlink(tempOutputPath);
-                await fs.unlink(finalOutputPath);
+                await fsPromises.unlink(tempOutputPath);
+                await fsPromises.unlink(finalOutputPath);
                 console.log('Temporary files deleted');
             } catch (unlinkError) {
                 console.error('Error deleting temporary files:', unlinkError);
