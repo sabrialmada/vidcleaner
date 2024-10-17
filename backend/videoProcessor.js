@@ -486,8 +486,6 @@ const crypto = require('crypto');
 const fs = require('fs').promises;
 const path = require('path');
 
-
-
 function ffmpegPromise(inputPath, outputPath, operation) {
   return new Promise((resolve, reject) => {
     const command = ffmpeg(inputPath);
@@ -499,7 +497,8 @@ function ffmpegPromise(inputPath, outputPath, operation) {
         console.log(`FFmpeg command: ${commandLine}`);
       })
       .on('progress', progress => {
-        console.log(`Processing: ${progress.percent ? progress.percent.toFixed(2) : 'undefined'}% done`);
+        const percent = progress.percent ? progress.percent.toFixed(2) : 'N/A';
+        console.log(`Processing: ${percent}% done`);
       })
       .on('end', () => {
         console.log(`FFmpeg operation completed: ${outputPath}`);
@@ -575,7 +574,6 @@ async function safeDelete(filePath) {
 async function processVideo(inputPath, outputPath) {
   const tempFiles = [];
   try {
-    // File system checks
     await fs.access(inputPath, fs.constants.R_OK);
     console.log(`Input file exists and is readable: ${inputPath}`);
 
@@ -603,7 +601,6 @@ async function processVideo(inputPath, outputPath) {
     console.error('Error processing video:', error);
     throw error;
   } finally {
-    // Clean up temp files
     for (const file of tempFiles) {
       await safeDelete(file);
     }

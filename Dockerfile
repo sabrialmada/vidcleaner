@@ -1,8 +1,8 @@
-FROM node:20
+FROM node:20-slim
 
-# Install FFmpeg, Chromium, and curl
+# Install FFmpeg, Chromium, curl, and other necessary tools
 RUN apt-get update && \
-    apt-get install -y ffmpeg chromium curl && \
+    apt-get install -y ffmpeg chromium curl procps && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -17,6 +17,9 @@ RUN yt-dlp --version
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD true
 ENV PUPPETEER_EXECUTABLE_PATH /usr/bin/chromium
 
+# Create a non-root user
+RUN useradd -m appuser
+
 WORKDIR /usr/src/app
 
 # Copy package.json and package-lock.json from the backend folder
@@ -27,6 +30,12 @@ RUN npm install --only=production
 
 # Copy the backend folder content
 COPY backend ./
+
+# Change ownership of the app files to the non-root user
+RUN chown -R appuser:appuser /usr/src/app
+
+# Switch to non-root user
+USER appuser
 
 EXPOSE 5000
 

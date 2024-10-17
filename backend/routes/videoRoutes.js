@@ -139,14 +139,14 @@ module.exports = router;
 
 const express = require('express');
 const path = require('path');
-const fs = require('fs').promises;
+const fs = require('fs');
+const fsPromises = require('fs').promises;
 const multer = require('multer');
 const archiver = require('archiver');
 const { processVideo, safeDelete } = require('../videoProcessor');
 
 const router = express.Router();
 
-// Multer setup for file uploads
 const upload = multer({ 
   dest: 'uploads/',
   limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
@@ -197,7 +197,7 @@ router.post('/process-videos', upload.array('videos', 10), async (req, res) => {
 
     for (const file of processedFiles) {
       try {
-        await fs.access(file.path, fs.constants.R_OK);
+        await fsPromises.access(file.path, fs.constants.R_OK);
         archive.file(file.path, { name: file.name });
       } catch (error) {
         console.error(`Error accessing file ${file.path}:`, error);
@@ -221,7 +221,6 @@ router.post('/process-videos', upload.array('videos', 10), async (req, res) => {
 
     if (errors.length > 0) {
       console.warn('Some errors occurred during processing:', errors);
-      // You might want to send these errors to the client as well
     }
 
   } catch (error) {
