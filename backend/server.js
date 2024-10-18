@@ -486,7 +486,7 @@ module.exports = server; */
 // FOR PRODUCTION
 
 
-require('dotenv').config();
+/* require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
@@ -527,7 +527,6 @@ app.use(cors({
 
 app.use('/api/subscriptions/webhook', express.raw({type: 'application/json'}));
 
-/* app.use(bodyParser.json()); */
 
 app.use(bodyParser.json({ limit: '300mb' }));
 app.use(bodyParser.urlencoded({ limit: '300mb', extended: true }));
@@ -555,13 +554,6 @@ app.use('/api/auth', authRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/user', userRoutes);
 
-/* app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(err.status || 500).json({
-    message: err.message || 'Something went wrong!',
-    error: process.env.NODE_ENV === 'production' ? {} : err
-  });
-}); */
 
 app.use((err, req, res, next) => {
   // Log the error
@@ -598,6 +590,157 @@ app.use((err, req, res, next) => {
   }
 });
 
+app.use((req, res) => {
+  res.status(404).json({ message: "Sorry, that route doesn't exist." });
+});
+
+const PORT = process.env.PORT || 5000;
+const server = app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
+
+process.on('SIGTERM', () => {
+  console.log('SIGTERM signal received: closing HTTP server');
+  server.close(() => {
+    console.log('HTTP server closed');
+    mongoose.connection.close(false, () => {
+      console.log('MongoDB connection closed');
+      process.exit(0);
+    });
+  });
+});
+
+module.exports = server;
+ */
+
+require('dotenv').config();
+const express = require('express');
+const mongoose = require('mongoose');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+const helmet = require('helmet');
+const compression = require('compression');
+const rateLimit = require('express-rate-limit');
+const morgan = require('morgan');
+const fs = require('fs');
+const path = require('path');
+const cron = require('node-cron');
+
+const app = express();
+
+// Middleware
+app.use(helmet());
+app.use(compression());
+app.use(morgan('combined'));
+
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)){
+    fs.mkdirSync(uploadsDir, { recursive: true });
+    console.log('Uploads directory created.');
+}
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100
+});
+app.use(limiter);
+
+app.use(cors({
+  origin: process.env.FRONTEND_URL,
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+app.use('/api/subscriptions/webhook', express.raw({type: 'application/json'}));
+
+app.use(bodyParser.json({ limit: '300mb' }));
+app.use(bodyParser.urlencoded({ limit: '300mb', extended: true }));
+app.timeout = 300000; // 5 minutes
+
+mongoose.connect(process.env.MONGODB_URI, {
+  dbName: 'vidcleaner'
+})
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.error('MongoDB connection error:', err));
+
+console.log('Attempting to connect to MongoDB...');
+
+app.set('trust proxy', 1); // Trust first proxy
+
+const videoRoutes = require('./routes/videoRoutes');
+const reelRoutes = require('./routes/reelRoutes');
+const authRoutes = require('./routes/auth');
+const subscriptionRoutes = require('./routes/subscriptionRoutes');
+const userRoutes = require('./routes/userRoutes');
+const adminRoutes = require('./routes/adminRoutes'); // Add this line
+
+app.use('/api', videoRoutes);
+app.use('/api', reelRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/subscriptions', subscriptionRoutes);
+app.use('/api/user', userRoutes);
+app.use('/admin', adminRoutes); // Add this line
+
+// Cleanup function
+async function cleanupUploads() {
+    const files = await fs.promises.readdir(uploadsDir);
+    const now = new Date();
+
+    for (const file of files) {
+        const filePath = path.join(uploadsDir, file);
+        const stats = await fs.promises.stat(filePath);
+        const fileAge = now - stats.mtime;
+        
+        // Delete files older than 1 hour (3600000 milliseconds)
+        if (fileAge > 3600000) {
+            try {
+                await fs.promises.unlink(filePath);
+                console.log(`Deleted old file: ${file}`);
+            } catch (error) {
+                console.error(`Failed to delete file ${file}:`, error);
+            }
+        }
+    }
+}
+
+// Schedule cleanup
+cron.schedule('0 * * * *', () => {
+    console.log('Running scheduled cleanup of uploads directory');
+    cleanupUploads().catch(error => {
+        console.error('Error during scheduled cleanup:', error);
+    });
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Error:', err.message);
+  console.error('Stack:', err.stack);
+
+  const isProduction = process.env.NODE_ENV === 'production';
+  const statusCode = err.status || 500;
+
+  const errorResponse = {
+    message: isProduction ? 'An unexpected error occurred' : err.message,
+    error: isProduction ? {} : {
+      status: statusCode,
+      stack: err.stack
+    }
+  };
+
+  if (err.name === 'ValidationError') {
+    errorResponse.details = Object.values(err.errors).map(error => error.message);
+  }
+
+  res.status(statusCode).json(errorResponse);
+
+  if (statusCode === 500) {
+    // TODO: Send to error monitoring service
+    // Example: Sentry.captureException(err);
+  }
+});
+
+// 404 handler
 app.use((req, res) => {
   res.status(404).json({ message: "Sorry, that route doesn't exist." });
 });
