@@ -495,6 +495,9 @@ const helmet = require('helmet');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const morgan = require('morgan');
+const fs = require('fs');
+const path = require('path');
+
 
 const app = express();
 
@@ -502,6 +505,12 @@ const app = express();
 app.use(helmet());
 app.use(compression());
 app.use(morgan('combined'));
+
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)){
+    fs.mkdirSync(uploadsDir, { recursive: true });
+    console.log('Uploads directory created.');
+}
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,

@@ -989,7 +989,7 @@ router.post('/download-reel', async (req, res) => {
 module.exports = router; */
 
 
-const express = require('express');
+/* const express = require('express');
 const path = require('path');
 const { processVideo } = require('../videoProcessor');
 const { exec } = require('child_process');
@@ -1102,6 +1102,143 @@ async function downloadInstagramReel(req, res) {
 }
 
 // Route to handle download requests
+router.post('/download-reel', async (req, res) => {
+    const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Operation timed out')), 300000) // 5 minutes
+    );
+
+    try {
+        await Promise.race([downloadInstagramReel(req, res), timeoutPromise]);
+    } catch (error) {
+        if (error.message === 'Operation timed out') {
+            console.error('The operation timed out');
+            if (!res.headersSent) {
+                res.status(504).json({ message: 'The operation timed out.' });
+            }
+        } else {
+            console.error(`Unexpected error: ${error.message}`);
+            console.error(error.stack);
+            if (!res.headersSent) {
+                res.status(500).json({ message: 'An unexpected error occurred.', error: error.message });
+            }
+        }
+    }
+});
+
+module.exports = router; */
+
+const express = require('express');
+const path = require('path');
+const { processVideo } = require('../videoProcessor');
+const { exec } = require('child_process');
+const util = require('util');
+const execPromise = util.promisify(exec);
+const { execFile } = require('child_process');
+const ffmpegPath = require('ffmpeg-static');
+const fs = require('fs');
+const fsPromises = require('fs').promises;
+
+const router = express.Router();
+const uploadsDir = path.join(__dirname, '../uploads');
+
+// Function to validate Instagram Reel URL
+const isValidInstagramUrl = (url) => {
+    const regex = /^(https?:\/\/)?(www\.)?instagram\.com\/reel\/[A-Za-z0-9_-]+\/?(?:\?.*)?$/;
+    return regex.test(url);
+};
+
+async function downloadInstagramReel(req, res) {
+    console.log('Starting Instagram reel download process');
+    const reelUrl = req.body.reelUrl;
+    const cleanMetadata = req.body.cleanMetadata;
+    console.log(`Reel URL: ${reelUrl}`);
+    console.log(`Clean metadata option: ${cleanMetadata}`);
+
+    if (!isValidInstagramUrl(reelUrl)) {
+        console.log('Invalid Instagram reel URL');
+        return res.status(400).json({ message: 'Invalid Instagram reel URL.' });
+    }
+
+    const tempOutputPath = path.join(uploadsDir, `temp_reel_${Date.now()}.mp4`);
+    let finalOutputPath = path.join(uploadsDir, `instagram_reel_${Date.now()}.mp4`);
+
+    try {
+        console.log('Downloading reel using yt-dlp');
+        const ytdlpCommand = `yt-dlp -o "${tempOutputPath}" "${reelUrl}" --no-check-certificate --no-warnings --ignore-errors --no-playlist --format "best[ext=mp4]" --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"`;
+        const { stdout, stderr } = await execPromise(ytdlpCommand);
+        console.log('yt-dlp output:', stdout);
+        if (stderr) console.error('yt-dlp stderr:', stderr);
+
+        try {
+            await fsPromises.access(tempOutputPath, fs.constants.F_OK);
+        } catch (error) {
+            throw new Error('Failed to download the video file');
+        }
+        console.log('Download completed');
+
+        console.log('Re-encoding video for compatibility');
+        await new Promise((resolve, reject) => {
+            execFile(ffmpegPath, [
+                '-i', tempOutputPath,
+                '-c:v', 'libx264',
+                '-preset', 'medium',
+                '-crf', '23',
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                finalOutputPath
+            ], (error, stdout, stderr) => {
+                if (error) {
+                    console.error('FFmpeg error:', error);
+                    reject(error);
+                } else {
+                    console.log('FFmpeg output:', stdout);
+                    if (stderr) console.error('FFmpeg stderr:', stderr);
+                    resolve();
+                }
+            });
+        });
+        console.log('Re-encoding completed');
+
+        if (cleanMetadata) {
+            console.log('Cleaning metadata requested, processing video');
+            const cleanedFilePath = `${finalOutputPath}_cleaned.mp4`;
+            await processVideo(finalOutputPath, cleanedFilePath);
+            await fsPromises.unlink(finalOutputPath);
+            finalOutputPath = cleanedFilePath;
+        }
+
+        console.log('Sending processed video to client');
+        res.download(finalOutputPath, 'instagram_reel.mp4', async (err) => {
+            if (err) {
+                console.error('Error sending the file:', err);
+            }
+            console.log('Cleaning up temporary files');
+            try {
+                await fsPromises.unlink(tempOutputPath);
+                await fsPromises.unlink(finalOutputPath);
+                console.log('Temporary files deleted');
+            } catch (unlinkError) {
+                console.error('Error deleting temporary files:', unlinkError);
+            }
+        });
+
+    } catch (error) {
+        console.error(`Error processing the reel: ${error.message}`);
+        console.error(`Error details:`, error);
+        let errorMessage = 'Error processing the reel.';
+        if (error.message.includes('This video is unavailable')) {
+            errorMessage = 'This Instagram Reel is unavailable. It might be private or deleted.';
+        } else if (error.message.includes('Unable to extract video info')) {
+            errorMessage = 'Unable to extract video information. The reel might be private or Instagram might have changed their structure.';
+        } else if (error.message.includes('Failed to download the video file')) {
+            errorMessage = 'Failed to download the video file. The reel might be unavailable or there might be network issues.';
+        }
+        if (!res.headersSent) {
+            res.status(500).json({ message: errorMessage, error: error.message });
+        }
+    }
+}
+
 router.post('/download-reel', async (req, res) => {
     const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error('Operation timed out')), 300000) // 5 minutes
