@@ -1210,7 +1210,11 @@ async function downloadInstagramReel(req, res) {
         console.log('Sending processed video to client');
         res.download(finalOutputPath, 'instagram_reel.mp4', async (err) => {
             if (err) {
-                console.error('Error sending the file:', err);
+                if (err.code === 'ECONNABORTED') {
+                    console.log('Client connection aborted before download completed');
+                } else {
+                    console.error('Error sending the file:', err);
+                }
             }
             console.log('Cleaning up temporary files');
             try {

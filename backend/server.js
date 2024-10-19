@@ -675,6 +675,13 @@ const subscriptionRoutes = require('./routes/subscriptionRoutes');
 const userRoutes = require('./routes/userRoutes');
 const adminRoutes = require('./routes/adminRoutes'); // Add this line
 
+app.use((req, res, next) => {
+  req.socket.setTimeout(10 * 60 * 1000); // 10 minutes
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Keep-Alive', 'timeout=600'); // 10 minutes
+  next();
+});
+
 app.use('/api', videoRoutes);
 app.use('/api', reelRoutes);
 app.use('/api/auth', authRoutes);
