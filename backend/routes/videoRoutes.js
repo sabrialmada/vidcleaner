@@ -255,7 +255,7 @@ async function cleanupFiles(files) {
 
 module.exports = router; */
 
-const express = require('express');
+/* const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const fsPromises = require('fs').promises;
@@ -380,5 +380,100 @@ async function cleanupFiles(files) {
     }
   }
 }
+
+module.exports = router; */
+
+
+const express = require('express');
+const path = require('path');
+const fs = require('fs');
+const fsPromises = require('fs').promises;
+const multer = require('multer');
+const archiver = require('archiver');
+const { videoQueue } = require('../server');
+
+const router = express.Router();
+const uploadsDir = path.join(__dirname, '../uploads');
+
+const upload = multer({ 
+  dest: uploadsDir,
+  limits: { 
+    fileSize: 300 * 1024 * 1024,
+    fieldSize: 300 * 1024 * 1024
+  }
+});
+
+router.post('/process-videos', upload.array('videos', 10), async (req, res) => {
+  const videoFiles = req.files;
+  if (!videoFiles || videoFiles.length === 0) {
+    return res.status(400).json({ message: 'No video files uploaded' });
+  }
+
+  const totalSize = videoFiles.reduce((acc, file) => acc + file.size, 0);
+  if (totalSize > 300 * 1024 * 1024) {
+    return res.status(400).json({ message: 'Total file size exceeds 300MB limit' });
+  }
+
+  const jobIds = [];
+
+  for (const videoFile of videoFiles) {
+    const inputFilePath = path.join(uploadsDir, videoFile.filename);
+    const outputFilePath = path.join(uploadsDir, `processed_${videoFile.filename}.mp4`);
+
+    const job = await videoQueue.add({
+      inputPath: inputFilePath,
+      outputPath: outputFilePath,
+      originalName: videoFile.originalname
+    });
+
+    jobIds.push(job.id);
+  }
+
+  res.status(202).json({ 
+    message: 'Video processing jobs queued',
+    jobIds: jobIds
+  });
+});
+
+router.get('/job-status/:jobId', async (req, res) => {
+  const jobId = req.params.jobId;
+  const job = await videoQueue.getJob(jobId);
+
+  if (job === null) {
+    return res.status(404).json({ message: 'Job not found' });
+  }
+
+  const state = await job.getState();
+  const progress = job._progress;
+  const result = job.returnvalue;
+
+  res.json({ jobId, state, progress, result });
+});
+
+router.get('/download-processed/:jobId', async (req, res) => {
+  const jobId = req.params.jobId;
+  const job = await videoQueue.getJob(jobId);
+
+  if (job === null) {
+    return res.status(404).json({ message: 'Job not found' });
+  }
+
+  const state = await job.getState();
+  if (state !== 'completed') {
+    return res.status(400).json({ message: 'Job not completed yet' });
+  }
+
+  const { outputPath } = job.returnvalue;
+
+  res.download(outputPath, path.basename(outputPath), (err) => {
+    if (err) {
+      console.error('Error sending the processed file:', err);
+    }
+    // Clean up the file after sending
+    fs.unlink(outputPath, (unlinkErr) => {
+      if (unlinkErr) console.error('Error deleting file after download:', unlinkErr);
+    });
+  });
+});
 
 module.exports = router;
