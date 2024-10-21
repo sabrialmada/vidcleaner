@@ -1029,16 +1029,54 @@ app.use('/admin', adminRoutes);
 // Process jobs in the queue
 videoQueue.process(async (job) => {
   const { inputPath, outputPath } = job.data;
-  const { processVideo, safeDelete } = require('./videoProcessor');
   
-  try {
-    const md5Hash = await processVideo(inputPath, outputPath);
-    await safeDelete(inputPath);
-    return { md5Hash, outputPath };
-  } catch (error) {
-    console.error(`Error processing video job:`, error);
-    throw error;
-  }
+  job.progress(0);
+  console.log(`Starting job ${job.id} for input: ${inputPath}`);
+
+  return new Promise(async (resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error('Job timed out'));
+    }, 30 * 60 * 1000); // 30 minutes timeout
+
+    try {
+      // Simulating progress updates
+      const progressInterval = setInterval(() => {
+        job.progress(Math.min(job.progress() + 10, 90));
+      }, 5000);
+
+      const result = await processVideo(inputPath, outputPath);
+      
+      clearInterval(progressInterval);
+      clearTimeout(timeout);
+      
+      job.progress(100);
+      console.log(`Job ${job.id} completed successfully`);
+      resolve(result);
+    } catch (error) {
+      clearTimeout(timeout);
+      console.error(`Error processing video job ${job.id}:`, error);
+      reject(error);
+    } finally {
+      try {
+        await safeDelete(inputPath);
+        console.log(`Input file deleted for job ${job.id}: ${inputPath}`);
+      } catch (deleteError) {
+        console.error(`Error deleting input file for job ${job.id}:`, deleteError);
+      }
+    }
+  });
+});
+
+videoQueue.on('completed', (job, result) => {
+  console.log(`Job ${job.id} completed with result:`, result);
+});
+
+videoQueue.on('failed', (job, err) => {
+  console.error(`Job ${job.id} failed with error:`, err);
+});
+
+videoQueue.on('progress', (job, progress) => {
+  console.log(`Job ${job.id} is ${progress}% complete`);
 });
 
 // Cleanup function

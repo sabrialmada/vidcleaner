@@ -571,38 +571,61 @@ async function safeDelete(filePath) {
   }
 }
 
+const fs = require('fs').promises;
+const path = require('path');
+
 async function processVideo(inputPath, outputPath) {
   const tempFiles = [];
   try {
+    console.log(`Starting video processing for: ${inputPath}`);
+    
     await fs.access(inputPath, fs.constants.R_OK);
-    console.log(`Input file exists and is readable: ${inputPath}`);
+    console.log(`Input file verified: ${inputPath}`);
 
     const tempDir = path.dirname(inputPath);
     await fs.access(tempDir, fs.constants.W_OK);
-    console.log(`Temp directory is writable: ${tempDir}`);
+    console.log(`Temp directory verified: ${tempDir}`);
 
-    console.log(`Starting video processing: ${inputPath}`);
     const tempFile1 = path.join(tempDir, `temp_video_1_${Date.now()}.mp4`);
     const tempFile2 = path.join(tempDir, `temp_video_2_${Date.now()}.mp4`);
     tempFiles.push(tempFile1, tempFile2);
 
+    console.log('Removing metadata...');
     await removeMetadata(inputPath, tempFile1);
+    console.log('Metadata removed successfully.');
+
+    console.log('Modifying video...');
     await modifyVideo(tempFile1, tempFile2);
+    console.log('Video modified successfully.');
+
+    console.log('Adjusting audio...');
     await adjustAudio(tempFile2, tempFile1);
+    console.log('Audio adjusted successfully.');
+
+    console.log('Re-encoding video...');
     await reencodeVideo(tempFile1, tempFile2);
+    console.log('Video re-encoded successfully.');
+
+    console.log('Changing color space...');
     await changeColorSpace(tempFile2, outputPath);
+    console.log('Color space changed successfully.');
 
     const md5Hash = await generateMD5(outputPath);
     console.log(`MD5 Hash of processed video: ${md5Hash}`);
 
-    console.log('Video processing completed.');
-    return md5Hash;
+    console.log(`Video processing completed successfully: ${outputPath}`);
+    return { md5Hash, outputPath };
   } catch (error) {
-    console.error('Error processing video:', error);
+    console.error('Error in processVideo:', error);
     throw error;
   } finally {
     for (const file of tempFiles) {
-      await safeDelete(file);
+      try {
+        await safeDelete(file);
+        console.log(`Temporary file deleted: ${file}`);
+      } catch (deleteError) {
+        console.error(`Error deleting temporary file ${file}:`, deleteError);
+      }
     }
   }
 }
