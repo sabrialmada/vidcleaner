@@ -571,9 +571,6 @@ async function safeDelete(filePath) {
   }
 }
 
-const fs = require('fs').promises;
-const path = require('path');
-
 async function processVideo(inputPath, outputPath) {
   const tempFiles = [];
   try {
