@@ -25,9 +25,9 @@ WORKDIR /usr/src/app
 # Copy package.json and package-lock.json from the backend folder
 COPY backend/package*.json ./
 
-# Install dependencies, including node-cron
+# Install dependencies, including node-cron and bull
 RUN npm install --only=production && \
-    npm install node-cron
+    npm install node-cron bull
 
 # Copy the backend folder content
 COPY backend ./
