@@ -960,6 +960,7 @@ const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
 const { videoQueue } = require('./queue');
+const { processVideo, safeDelete } = require('./videoProcessor');
 
 const app = express();
 
