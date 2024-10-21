@@ -387,10 +387,8 @@ module.exports = router; */
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
-const fsPromises = require('fs').promises;
 const multer = require('multer');
-const archiver = require('archiver');
-const { videoQueue } = require('../server');
+const { videoQueue } = require('../queue'); // Import from queue.js
 
 const router = express.Router();
 const uploadsDir = path.join(__dirname, '../uploads');
