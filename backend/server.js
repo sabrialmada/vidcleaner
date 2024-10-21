@@ -959,7 +959,7 @@ const morgan = require('morgan');
 const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
-const { videoQueue } = require('./queue'); // Import videoQueue from queue.js
+const { videoQueue } = require('./queue');
 
 const app = express();
 
@@ -980,11 +980,13 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
+// Updated CORS configuration
 app.use(cors({
-  origin: process.env.FRONTEND_URL,
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  origin: ['https://www.vidcleaner.com', 'http://localhost:3000'], // Add your frontend URL and localhost for development
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization']
+  optionsSuccessStatus: 204
 }));
 
 app.use('/api/subscriptions/webhook', express.raw({type: 'application/json'}));
@@ -1000,7 +1002,7 @@ mongoose.connect(process.env.MONGODB_URI, {
 
 console.log('Attempting to connect to MongoDB...');
 
-app.set('trust proxy', 1); // Trust first proxy
+app.set('trust proxy', 1);
 
 const videoRoutes = require('./routes/videoRoutes');
 const reelRoutes = require('./routes/reelRoutes');
@@ -1011,9 +1013,9 @@ const adminRoutes = require('./routes/adminRoutes');
 
 // Adjust timeout for Railway
 app.use((req, res, next) => {
-  req.socket.setTimeout(25 * 1000); // 25 seconds
+  req.socket.setTimeout(25 * 1000);
   res.setHeader('Connection', 'keep-alive');
-  res.setHeader('Keep-Alive', 'timeout=25'); // 25 seconds
+  res.setHeader('Keep-Alive', 'timeout=25');
   next();
 });
 
@@ -1049,7 +1051,6 @@ async function cleanupUploads() {
         const stats = await fs.promises.stat(filePath);
         const fileAge = now - stats.mtime;
         
-        // Delete files older than 1 hour (3600000 milliseconds)
         if (fileAge > 3600000) {
             try {
                 await fs.promises.unlink(filePath);
