@@ -961,6 +961,9 @@ const path = require('path');
 const cron = require('node-cron');
 const { videoQueue } = require('./queue');
 const { processVideo, safeDelete } = require('./videoProcessor');
+const Redis = require('ioredis');
+const redis = new Redis(process.env.REDIS_URL); // Use the correct REDIS_URL
+
 
 const app = express();
 
@@ -983,7 +986,7 @@ app.use(limiter);
 
 // Updated CORS configuration
 app.use(cors({
-  origin: ['https://www.vidcleaner.com', 'http://localhost:3000'], // Add your frontend URL and localhost for development
+  origin: '*' /* ['https://www.vidcleaner.com', 'http://localhost:3000'] */, // Add your frontend URL and localhost for development
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
@@ -994,6 +997,16 @@ app.use('/api/subscriptions/webhook', express.raw({type: 'application/json'}));
 
 app.use(bodyParser.json({ limit: '300mb' }));
 app.use(bodyParser.urlencoded({ limit: '300mb', extended: true }));
+
+redis.set('test-key', 'test-value')
+  .then(() => redis.get('test-key'))
+  .then((result) => {
+    console.log('Redis test success:', result); // Should log: 'test-value'
+    redis.disconnect();
+  })
+  .catch((error) => {
+    console.error('Redis connection failed:', error);
+  });
 
 mongoose.connect(process.env.MONGODB_URI, {
   dbName: 'vidcleaner'
