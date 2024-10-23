@@ -962,8 +962,41 @@ const cron = require('node-cron');
 const { videoQueue } = require('./queue');
 const { processVideo, safeDelete } = require('./videoProcessor');
 const Redis = require('ioredis');
-const redis = new Redis(process.env.REDIS_URL); // Use the correct REDIS_URL
 
+// Redis Configuration
+const redisConfig = {
+  host: process.env.REDIS_HOST,
+  port: process.env.REDIS_PORT || 6379,
+  password: process.env.REDIS_PASSWORD,
+  tls: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+  retryStrategy(times) {
+    const delay = Math.min(times * 50, 2000);
+    console.log(`Retrying Redis connection in ${delay}ms...`);
+    return delay;
+  },
+  maxRetriesPerRequest: null
+};
+
+// Initialize Redis
+const redis = process.env.REDIS_URL 
+  ? new Redis(process.env.REDIS_URL, {
+      tls: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+      maxRetriesPerRequest: null
+    })
+  : new Redis(redisConfig);
+
+// Redis event handlers
+redis.on('connect', () => {
+  console.log('Successfully connected to Redis');
+});
+
+redis.on('error', (error) => {
+  console.error('Redis connection error:', error);
+});
+
+redis.on('ready', () => {
+  console.log('Redis client ready');
+});
 
 const app = express();
 
@@ -972,52 +1005,46 @@ app.use(helmet());
 app.use(compression());
 app.use(morgan('combined'));
 
+// Create uploads directory if it doesn't exist
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)){
     fs.mkdirSync(uploadsDir, { recursive: true });
     console.log('Uploads directory created.');
 }
 
+// Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100
 });
 app.use(limiter);
 
-// Updated CORS configuration
+// CORS configuration
 app.use(cors({
-  origin: '*' /* ['https://www.vidcleaner.com', 'http://localhost:3000'] */, // Add your frontend URL and localhost for development
+  origin: process.env.NODE_ENV === 'production' 
+    ? ['https://www.vidcleaner.com']
+    : ['http://localhost:3000'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
   optionsSuccessStatus: 204
 }));
 
+// Body parser configuration
 app.use('/api/subscriptions/webhook', express.raw({type: 'application/json'}));
-
 app.use(bodyParser.json({ limit: '300mb' }));
 app.use(bodyParser.urlencoded({ limit: '300mb', extended: true }));
 
-/* redis.set('test-key', 'test-value')
-  .then(() => redis.get('test-key'))
-  .then((result) => {
-    console.log('Redis test success:', result); // Should log: 'test-value'
-    redis.disconnect();
-  })
-  .catch((error) => {
-    console.error('Redis connection failed:', error);
-  }); */
-
+// MongoDB connection
 mongoose.connect(process.env.MONGODB_URI, {
   dbName: 'vidcleaner'
 })
-  .then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB connection error:', err));
-
-console.log('Attempting to connect to MongoDB...');
+.then(() => console.log('MongoDB connected'))
+.catch(err => console.error('MongoDB connection error:', err));
 
 app.set('trust proxy', 1);
 
+// Routes
 const videoRoutes = require('./routes/videoRoutes');
 const reelRoutes = require('./routes/reelRoutes');
 const authRoutes = require('./routes/auth');
@@ -1025,7 +1052,7 @@ const subscriptionRoutes = require('./routes/subscriptionRoutes');
 const userRoutes = require('./routes/userRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 
-// Adjust timeout for Railway
+// Railway timeout adjustment
 app.use((req, res, next) => {
   req.socket.setTimeout(25 * 1000);
   res.setHeader('Connection', 'keep-alive');
@@ -1033,6 +1060,7 @@ app.use((req, res, next) => {
   next();
 });
 
+// Route handlers
 app.use('/api', videoRoutes);
 app.use('/api', reelRoutes);
 app.use('/api/auth', authRoutes);
@@ -1040,7 +1068,7 @@ app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/user', userRoutes);
 app.use('/admin', adminRoutes);
 
-// Process jobs in the queue
+// Video queue processing
 videoQueue.process(async (job) => {
   const { inputPath, outputPath } = job.data;
   
@@ -1053,7 +1081,6 @@ videoQueue.process(async (job) => {
     }, 30 * 60 * 1000); // 30 minutes timeout
 
     try {
-      // Simulating progress updates
       const progressInterval = setInterval(() => {
         job.progress(Math.min(job.progress() + 10, 90));
       }, 5000);
@@ -1081,6 +1108,7 @@ videoQueue.process(async (job) => {
   });
 });
 
+// Queue event handlers
 videoQueue.on('completed', (job, result) => {
   console.log(`Job ${job.id} completed with result:`, result);
 });
@@ -1143,11 +1171,6 @@ app.use((err, req, res, next) => {
   }
 
   res.status(statusCode).json(errorResponse);
-
-  if (statusCode === 500) {
-    // TODO: Send to error monitoring service
-    // Example: Sentry.captureException(err);
-  }
 });
 
 // 404 handler
@@ -1155,20 +1178,36 @@ app.use((req, res) => {
   res.status(404).json({ message: "Sorry, that route doesn't exist." });
 });
 
+// Server startup
 const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
 
-process.on('SIGTERM', () => {
+// Graceful shutdown
+process.on('SIGTERM', async () => {
   console.log('SIGTERM signal received: closing HTTP server');
-  server.close(() => {
-    console.log('HTTP server closed');
-    mongoose.connection.close(false, () => {
-      console.log('MongoDB connection closed');
-      process.exit(0);
+  
+  try {
+    // Close server first
+    await new Promise((resolve) => {
+      server.close(resolve);
+      console.log('HTTP server closed');
     });
-  });
+
+    // Close Redis connection
+    await redis.quit();
+    console.log('Redis connection closed');
+
+    // Close MongoDB connection
+    await mongoose.connection.close(false);
+    console.log('MongoDB connection closed');
+
+    process.exit(0);
+  } catch (error) {
+    console.error('Error during shutdown:', error);
+    process.exit(1);
+  }
 });
 
 module.exports = { app, server };
