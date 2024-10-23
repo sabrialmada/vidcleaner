@@ -1,31 +1,26 @@
-/* const Queue = require('bull');
-
-// Create Bull queue for video processing
-const videoQueue = new Queue('video processing', process.env.REDIS_URL);
-
-module.exports = { videoQueue };
- */
-
 const Queue = require('bull');
 
-if (!process.env.REDIS_URL) {
-  console.error('REDIS_URL is not defined in environment variables');
-  process.exit(1);
-}
+// Construct Redis URL using the public networking address
+const REDIS_URL = 'redis://default:ktGUarMrJSVqZSkZqgSdhkbejWQEmFpp@autorack.proxy.rlwy.net:38340';
 
-console.log('Initializing video queue with Redis URL:', process.env.REDIS_URL.slice(0, 8) + '...');
+console.log('Initializing queue with Redis connection');
 
-const videoQueue = new Queue('video-processing', {
-  redis: process.env.REDIS_URL,
-  defaultJobOptions: {
-    removeOnComplete: true,
-    removeOnFail: false
-  },
-  settings: {
-    lockDuration: 30000,
-    stalledInterval: 30000,
+const queueOptions = {
+  redis: {
+    port: 38340,
+    host: 'autorack.proxy.rlwy.net',
+    retryStrategy: function(times) {
+      const delay = Math.min(times * 50, 2000);
+      console.log(`Retrying Redis connection in ${delay}ms...`);
+      return delay;
+    },
+    maxRetriesPerRequest: null,
+    enableReadyCheck: true,
+    connectTimeout: 30000,
   }
-});
+};
+
+const videoQueue = new Queue('video-processing', REDIS_URL, queueOptions);
 
 videoQueue.on('error', (error) => {
   console.error('Queue Error:', error);
@@ -37,13 +32,6 @@ videoQueue.on('failed', (job, error) => {
 
 videoQueue.on('stalled', (job) => {
   console.warn(`Job ${job.id} has stalled`);
-});
-
-// Test the connection
-videoQueue.client.ping().then(() => {
-  console.log('Successfully connected to Redis through Bull queue');
-}).catch((error) => {
-  console.error('Failed to ping Redis through Bull queue:', error);
 });
 
 module.exports = { videoQueue };
