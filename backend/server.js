@@ -959,92 +959,133 @@ const morgan = require('morgan');
 const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
-const { videoQueue } = require('./queue');
-const { processVideo, safeDelete } = require('./videoProcessor');
 const Redis = require('ioredis');
 
-// Redis Configuration
-const redisConfig = {
-  host: process.env.REDIS_HOST,
-  port: process.env.REDIS_PORT || 6379,
-  password: process.env.REDIS_PASSWORD,
-  tls: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
-  retryStrategy(times) {
-    const delay = Math.min(times * 50, 2000);
-    console.log(`Retrying Redis connection in ${delay}ms...`);
-    return delay;
-  },
-  maxRetriesPerRequest: null
-};
+// Validate required environment variables
+const requiredEnvVars = [
+  'REDIS_URL',
+  'MONGODB_URI',
+  'NODE_ENV'
+];
 
-// Initialize Redis
-const redis = process.env.REDIS_URL 
-  ? new Redis(process.env.REDIS_URL, {
-      tls: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
-      maxRetriesPerRequest: null
-    })
-  : new Redis(redisConfig);
+for (const envVar of requiredEnvVars) {
+  if (!process.env[envVar]) {
+    console.error(`Missing required environment variable: ${envVar}`);
+    process.exit(1);
+  }
+}
 
-// Redis event handlers
-redis.on('connect', () => {
-  console.log('Successfully connected to Redis');
+// Debug environment information
+console.log('Environment:', {
+  nodeEnv: process.env.NODE_ENV,
+  hasRedisUrl: !!process.env.REDIS_URL,
+  redisUrlStart: process.env.REDIS_URL ? `${process.env.REDIS_URL.slice(0, 8)}...` : 'not set'
 });
 
-redis.on('error', (error) => {
-  console.error('Redis connection error:', error);
-});
+// Initialize Redis with enhanced error handling
+let redis;
+try {
+  redis = new Redis(process.env.REDIS_URL, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: true,
+    retryStrategy(times) {
+      const delay = Math.min(times * 50, 2000);
+      console.log(`Retrying Redis connection in ${delay}ms...`);
+      return delay;
+    },
+    tls: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+    reconnectOnError(err) {
+      const targetError = 'READONLY';
+      return err.message.includes(targetError);
+    }
+  });
 
-redis.on('ready', () => {
-  console.log('Redis client ready');
-});
+  // Redis event handlers
+  redis.on('connect', () => {
+    console.log('Successfully connected to Redis');
+  });
+
+  redis.on('error', (error) => {
+    console.error('Redis connection error:', error);
+  });
+
+  redis.on('ready', () => {
+    console.log('Redis client ready');
+  });
+
+  redis.on('close', () => {
+    console.log('Redis connection closed');
+  });
+
+} catch (error) {
+  console.error('Error initializing Redis:', error);
+  process.exit(1);
+}
+
+// Import queue and processors after Redis initialization
+const { videoQueue } = require('./queue');
+const { processVideo, safeDelete } = require('./videoProcessor');
 
 const app = express();
 
-// Middleware
+// Basic middleware
 app.use(helmet());
 app.use(compression());
 app.use(morgan('combined'));
 
-// Create uploads directory if it doesn't exist
+// Create uploads directory
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)){
     fs.mkdirSync(uploadsDir, { recursive: true });
-    console.log('Uploads directory created.');
+    console.log('Uploads directory created:', uploadsDir);
 }
 
-// Rate limiting
+// Rate limiting configuration
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many requests from this IP, please try again later.'
 });
 app.use(limiter);
 
 // CORS configuration
-app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
+const corsOptions = {
+  origin: process.env.NODE_ENV === 'production'
     ? ['https://www.vidcleaner.com']
     : ['http://localhost:3000'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
   optionsSuccessStatus: 204
-}));
+};
+app.use(cors(corsOptions));
 
-// Body parser configuration
+// Body parser setup
 app.use('/api/subscriptions/webhook', express.raw({type: 'application/json'}));
 app.use(bodyParser.json({ limit: '300mb' }));
 app.use(bodyParser.urlencoded({ limit: '300mb', extended: true }));
 
-// MongoDB connection
+// MongoDB connection with enhanced error handling
 mongoose.connect(process.env.MONGODB_URI, {
-  dbName: 'vidcleaner'
+  dbName: 'vidcleaner',
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
 })
-.then(() => console.log('MongoDB connected'))
-.catch(err => console.error('MongoDB connection error:', err));
+.then(() => console.log('MongoDB connected successfully'))
+.catch(err => {
+  console.error('MongoDB connection error:', err);
+  process.exit(1);
+});
+
+mongoose.connection.on('error', err => {
+  console.error('MongoDB error:', err);
+});
 
 app.set('trust proxy', 1);
 
-// Routes
+// Import routes
 const videoRoutes = require('./routes/videoRoutes');
 const reelRoutes = require('./routes/reelRoutes');
 const authRoutes = require('./routes/auth');
@@ -1077,27 +1118,27 @@ videoQueue.process(async (job) => {
 
   return new Promise(async (resolve, reject) => {
     const timeout = setTimeout(() => {
-      reject(new Error('Job timed out'));
-    }, 30 * 60 * 1000); // 30 minutes timeout
+      reject(new Error('Job timed out after 30 minutes'));
+    }, 30 * 60 * 1000);
 
+    let progressInterval;
     try {
-      const progressInterval = setInterval(() => {
+      progressInterval = setInterval(() => {
         job.progress(Math.min(job.progress() + 10, 90));
       }, 5000);
 
       const result = await processVideo(inputPath, outputPath);
       
-      clearInterval(progressInterval);
-      clearTimeout(timeout);
-      
       job.progress(100);
       console.log(`Job ${job.id} completed successfully`);
       resolve(result);
     } catch (error) {
-      clearTimeout(timeout);
       console.error(`Error processing video job ${job.id}:`, error);
       reject(error);
     } finally {
+      clearInterval(progressInterval);
+      clearTimeout(timeout);
+      
       try {
         await safeDelete(inputPath);
         console.log(`Input file deleted for job ${job.id}: ${inputPath}`);
@@ -1123,31 +1164,37 @@ videoQueue.on('progress', (job, progress) => {
 
 // Cleanup function
 async function cleanupUploads() {
+  try {
     const files = await fs.promises.readdir(uploadsDir);
     const now = new Date();
+    let deletedCount = 0;
 
     for (const file of files) {
-        const filePath = path.join(uploadsDir, file);
+      const filePath = path.join(uploadsDir, file);
+      try {
         const stats = await fs.promises.stat(filePath);
         const fileAge = now - stats.mtime;
         
         if (fileAge > 3600000) {
-            try {
-                await fs.promises.unlink(filePath);
-                console.log(`Deleted old file: ${file}`);
-            } catch (error) {
-                console.error(`Failed to delete file ${file}:`, error);
-            }
+          await fs.promises.unlink(filePath);
+          deletedCount++;
+          console.log(`Deleted old file: ${file}`);
         }
+      } catch (error) {
+        console.error(`Error processing file ${file}:`, error);
+      }
     }
+    
+    console.log(`Cleanup completed. Deleted ${deletedCount} files`);
+  } catch (error) {
+    console.error('Error during cleanup:', error);
+  }
 }
 
 // Schedule cleanup
 cron.schedule('0 * * * *', () => {
-    console.log('Running scheduled cleanup of uploads directory');
-    cleanupUploads().catch(error => {
-        console.error('Error during scheduled cleanup:', error);
-    });
+  console.log('Running scheduled cleanup of uploads directory');
+  cleanupUploads();
 });
 
 // Error handling middleware
@@ -1180,13 +1227,24 @@ app.use((req, res) => {
 
 // Server startup
 const PORT = process.env.PORT || 5000;
-const server = app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+let server;
+
+async function startServer() {
+  try {
+    server = app.listen(PORT, () => {
+      console.log(`Server is running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
-  console.log('SIGTERM signal received: closing HTTP server');
+  console.log('SIGTERM signal received: initiating graceful shutdown');
   
   try {
     // Close server first
@@ -1203,11 +1261,24 @@ process.on('SIGTERM', async () => {
     await mongoose.connection.close(false);
     console.log('MongoDB connection closed');
 
+    console.log('Graceful shutdown completed');
     process.exit(0);
   } catch (error) {
     console.error('Error during shutdown:', error);
     process.exit(1);
   }
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  process.exit(1);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
 });
 
 module.exports = { app, server };
