@@ -986,20 +986,13 @@ console.log('Environment:', {
 let redis;
 try {
   const redisOptions = {
-    maxRetriesPerRequest: null,
-    enableReadyCheck: true,
     retryStrategy(times) {
       const delay = Math.min(times * 50, 2000);
       console.log(`Retrying Redis connection in ${delay}ms...`);
       return delay;
     },
     connectTimeout: 30000,
-    tls: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
-    reconnectOnError(err) {
-      const targetError = 'READONLY';
-      return err.message.includes(targetError);
-    },
-    lazyConnect: true // Don't connect immediately
+    tls: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined
   };
 
   redis = new Redis(process.env.REDIS_URL, redisOptions);
@@ -1021,26 +1014,11 @@ try {
     console.log('Redis connection closed');
   });
 
-  redis.on('reconnecting', () => {
-    console.log('Redis client reconnecting');
-  });
-
-  // Test the connection
-  redis.connect().then(() => {
-    return redis.ping();
-  }).then(() => {
-    console.log('Redis connection test successful');
-  }).catch((error) => {
-    console.error('Redis connection test failed:', error);
-    process.exit(1);
-  });
-
 } catch (error) {
   console.error('Error initializing Redis:', error);
   process.exit(1);
 }
 
-// Import queue and processors after Redis initialization
 const { videoQueue } = require('./queue');
 const { processVideo, safeDelete } = require('./videoProcessor');
 
@@ -1272,14 +1250,11 @@ process.on('unhandledRejection', (reason, promise) => {
   handleFatalError(reason);
 });
 
-// Server startup with Redis connection check
+// Server startup with simplified Redis check
 async function startServer() {
   try {
-    // Test Redis connection before starting server
-    const pingResponse = await redis.ping();
-    if (pingResponse !== 'PONG') {
-      throw new Error('Redis connection test failed');
-    }
+    // Simple Redis ping test
+    await redis.ping();
     console.log('Redis connection verified');
 
     // Start HTTP server
@@ -1305,32 +1280,17 @@ process.on('SIGTERM', async () => {
   
   try {
     if (server) {
-      // Stop accepting new connections
       await new Promise((resolve) => {
         server.close(resolve);
         console.log('HTTP server closed');
       });
     }
 
-    // Close Redis connections with timeout
-    const redisCloseTimeout = setTimeout(() => {
-      console.error('Redis close timeout, forcing exit');
-      process.exit(1);
-    }, 5000);
-
     if (redis) {
-      await Promise.race([
-        redis.quit(),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Redis quit timeout')), 4000)
-        )
-      ]);
+      await redis.quit();
+      console.log('Redis connection closed');
     }
 
-    clearTimeout(redisCloseTimeout);
-    console.log('Redis connection closed');
-
-    // Close MongoDB connection
     if (mongoose.connection.readyState !== 0) {
       await mongoose.connection.close(false);
       console.log('MongoDB connection closed');
