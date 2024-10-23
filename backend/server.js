@@ -1243,7 +1243,36 @@ app.use((req, res) => {
   res.status(404).json({ message: "Sorry, that route doesn't exist." });
 });
 
-// Server startup
+// Server initialization
+const PORT = process.env.PORT || 5000;
+let server = null;
+
+// Enhanced error handlers with server check
+function handleFatalError(error) {
+  console.error('Fatal error occurred:', error);
+  if (server) {
+    server.close(() => {
+      console.log('Server closed due to fatal error');
+      process.exit(1);
+    });
+  } else {
+    console.log('Server was not initialized, exiting');
+    process.exit(1);
+  }
+}
+
+// Process handlers
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  handleFatalError(error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  handleFatalError(reason);
+});
+
+// Server startup with Redis connection check
 async function startServer() {
   try {
     // Test Redis connection before starting server
@@ -1261,24 +1290,27 @@ async function startServer() {
     // Set up server error handling
     server.on('error', (error) => {
       console.error('Server error:', error);
-      process.exit(1);
+      handleFatalError(error);
     });
 
   } catch (error) {
     console.error('Failed to start server:', error);
-    process.exit(1);
+    handleFatalError(error);
   }
 }
 
-// Graceful shutdown with enhanced Redis handling
+// Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM signal received: initiating graceful shutdown');
   
   try {
-    // Stop accepting new connections
-    server.close(() => {
-      console.log('HTTP server closed');
-    });
+    if (server) {
+      // Stop accepting new connections
+      await new Promise((resolve) => {
+        server.close(resolve);
+        console.log('HTTP server closed');
+      });
+    }
 
     // Close Redis connections with timeout
     const redisCloseTimeout = setTimeout(() => {
@@ -1286,19 +1318,23 @@ process.on('SIGTERM', async () => {
       process.exit(1);
     }, 5000);
 
-    await Promise.race([
-      redis.quit(),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Redis quit timeout')), 4000)
-      )
-    ]);
+    if (redis) {
+      await Promise.race([
+        redis.quit(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Redis quit timeout')), 4000)
+        )
+      ]);
+    }
 
     clearTimeout(redisCloseTimeout);
     console.log('Redis connection closed');
 
     // Close MongoDB connection
-    await mongoose.connection.close(false);
-    console.log('MongoDB connection closed');
+    if (mongoose.connection.readyState !== 0) {
+      await mongoose.connection.close(false);
+      console.log('MongoDB connection closed');
+    }
 
     console.log('Graceful shutdown completed');
     process.exit(0);
@@ -1308,21 +1344,8 @@ process.on('SIGTERM', async () => {
   }
 });
 
-// Enhanced error handlers
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error);
-  // Attempt graceful shutdown
-  server.close(() => process.exit(1));
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  // Attempt graceful shutdown
-  server.close(() => process.exit(1));
-});
-
 // Start the server
-startServer().catch(error => {
+startServer().catch((error) => {
   console.error('Failed to start application:', error);
   process.exit(1);
 });
