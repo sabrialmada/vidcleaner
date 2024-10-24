@@ -5,41 +5,153 @@ if (!process.env.REDIS_URL) {
   process.exit(1);
 }
 
-console.log('Initializing queue with Redis URL');
-
-const queueOptions = {
-  redis: {
-    port: process.env.REDIS_PORT || 38340,
-    host: process.env.REDIS_HOST || 'autorack.proxy.rlwy.net',
-    retryStrategy: function(times) {
-      const delay = Math.min(times * 50, 2000);
-      console.log(`Retrying Redis connection in ${delay}ms...`);
-      return delay;
-    },
-    tls: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined
-  },
-  limiter: {
-    max: 1,
-    duration: 5000
-  },
-  settings: {
-    lockDuration: 30000,
-    stalledInterval: 30000,
+// Parse Redis URL to extract components
+const parseRedisUrl = (url) => {
+  try {
+    const parsedUrl = new URL(url);
+    return {
+      host: parsedUrl.hostname,
+      port: parsedUrl.port,
+      password: parsedUrl.password,
+      tls: parsedUrl.protocol === 'rediss:' ? { rejectUnauthorized: false } : undefined
+    };
+  } catch (error) {
+    console.error('Error parsing Redis URL:', error);
+    throw error;
   }
 };
 
+const redisConfig = parseRedisUrl(process.env.REDIS_URL);
+
+// Separate Redis client options from Queue options
+const redisClientConfig = {
+  port: redisConfig.port,
+  host: redisConfig.host,
+  password: redisConfig.password,
+  tls: process.env.NODE_ENV === 'production' ? redisConfig.tls : undefined,
+  maxRetriesPerRequest: 3,
+  retryStrategy: function(times) {
+    const delay = Math.min(times * 50, 2000);
+    console.log(`Retrying Redis connection in ${delay}ms...`);
+    return delay;
+  },
+  connectTimeout: 30000,
+  keepAlive: 30000
+};
+
+const queueOptions = {
+  redis: redisClientConfig,
+  prefix: 'bull',
+  limiter: {
+    max: 1, // Only process one job at a time
+    duration: 5000 // Wait 5 seconds before processing next job
+  },
+  settings: {
+    lockDuration: 300000, // 5 minutes
+    stalledInterval: 30000,
+    maxStalledCount: 2,
+    lockRenewTime: 15000 // Renew locks every 15 seconds
+  },
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 2000
+    },
+    removeOnComplete: {
+      age: 3600, // Keep completed jobs for 1 hour
+      count: 100 // Keep last 100 completed jobs
+    },
+    removeOnFail: false,
+    timeout: 1800000 // 30 minutes
+  }
+};
+
+console.log('Initializing queue with Redis config:', {
+  host: redisConfig.host,
+  port: redisConfig.port,
+  tls: redisConfig.tls ? 'enabled' : 'disabled'
+});
+
+// Create the queue with the correct configuration
 const videoQueue = new Queue('video-processing', process.env.REDIS_URL, queueOptions);
 
+// Enhanced error handling and logging
 videoQueue.on('error', (error) => {
   console.error('Queue Error:', error);
 });
 
 videoQueue.on('failed', (job, error) => {
   console.error(`Job ${job.id} failed with error:`, error);
+  console.error('Job data:', job.data);
+  
+  // Notify about repeated failures
+  if (job.attemptsMade >= job.opts.attempts) {
+    console.error(`Job ${job.id} has failed all ${job.opts.attempts} attempts`);
+  }
 });
 
 videoQueue.on('stalled', (job) => {
   console.warn(`Job ${job.id} has stalled`);
+});
+
+videoQueue.on('completed', (job, result) => {
+  console.log(`Job ${job.id} completed with result:`, result);
+});
+
+videoQueue.on('waiting', (jobId) => {
+  console.log(`Job ${jobId} is waiting`);
+});
+
+videoQueue.on('active', (job) => {
+  console.log(`Job ${job.id} has started processing`);
+});
+
+// Cleanup function for abandoned jobs with improved error handling
+async function cleanupStalledJobs() {
+  try {
+    const jobTypes = ['failed', 'stalled', 'delayed'];
+    const jobs = await Promise.all(jobTypes.map(type => videoQueue.getJobs([type])));
+    const allJobs = jobs.flat();
+    
+    console.log(`Found ${allJobs.length} jobs to check for cleanup`);
+    
+    for (const job of allJobs) {
+      try {
+        const state = await job.getState();
+        const jobAge = Date.now() - job.timestamp;
+        
+        if ((state === 'failed' || state === 'stalled') && jobAge > 3600000) {
+          console.log(`Cleaning up old ${state} job ${job.id}`);
+          await job.remove();
+          
+          // Clean up any associated files
+          if (job.data.inputPath) {
+            try {
+              const fs = require('fs').promises;
+              await fs.unlink(job.data.inputPath);
+              console.log(`Cleaned up input file for job ${job.id}`);
+            } catch (fileError) {
+              console.error(`Error cleaning up file for job ${job.id}:`, fileError);
+            }
+          }
+        }
+      } catch (jobError) {
+        console.error(`Error processing job ${job.id}:`, jobError);
+      }
+    }
+  } catch (error) {
+    console.error('Error in cleanup process:', error);
+  }
+}
+
+// Run cleanup every hour
+const CLEANUP_INTERVAL = 3600000; // 1 hour
+setInterval(cleanupStalledJobs, CLEANUP_INTERVAL);
+
+// Initial cleanup on startup
+cleanupStalledJobs().catch(error => {
+  console.error('Initial cleanup failed:', error);
 });
 
 module.exports = { videoQueue };

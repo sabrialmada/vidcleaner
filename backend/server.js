@@ -947,7 +947,13 @@ process.on('SIGTERM', () => {
 
 module.exports = { app, server, videoQueue }; */
 
-require('dotenv').config();
+const path = require('path');
+const dotenv = require('dotenv');
+
+// Load the correct environment file
+const envFile = process.env.NODE_ENV === 'production' ? '.env.production' : '.env';
+dotenv.config({ path: path.resolve(process.cwd(), envFile) });
+
 const express = require('express');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
@@ -956,8 +962,7 @@ const helmet = require('helmet');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const morgan = require('morgan');
-const fs = require('fs');
-const path = require('path');
+const fs = require('fs').promises;
 const cron = require('node-cron');
 const Redis = require('ioredis');
 
@@ -975,6 +980,22 @@ for (const envVar of requiredEnvVars) {
   }
 }
 
+// Parse Redis URL for better configuration
+const parseRedisUrl = (url) => {
+  try {
+    const parsedUrl = new URL(url);
+    return {
+      host: parsedUrl.hostname,
+      port: parsedUrl.port,
+      password: parsedUrl.password,
+      tls: parsedUrl.protocol === 'rediss:' ? { rejectUnauthorized: false } : undefined
+    };
+  } catch (error) {
+    console.error('Error parsing Redis URL:', error);
+    throw error;
+  }
+};
+
 // Debug environment information
 console.log('Environment:', {
   nodeEnv: process.env.NODE_ENV,
@@ -985,25 +1006,31 @@ console.log('Environment:', {
 // Initialize Redis with enhanced error handling
 let redis;
 try {
+  const redisConfig = parseRedisUrl(process.env.REDIS_URL);
   const redisOptions = {
+    host: redisConfig.host,
+    port: redisConfig.port,
+    password: redisConfig.password,
     retryStrategy(times) {
       const delay = Math.min(times * 50, 2000);
       console.log(`Retrying Redis connection in ${delay}ms...`);
       return delay;
     },
+    maxRetriesPerRequest: 3,
     connectTimeout: 30000,
-    tls: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined
+    keepAlive: 30000,
+    tls: process.env.NODE_ENV === 'production' ? redisConfig.tls : undefined
   };
 
-  redis = new Redis(process.env.REDIS_URL, redisOptions);
+  redis = new Redis(redisOptions);
 
-  // Redis event handlers
   redis.on('connect', () => {
     console.log('Successfully connected to Redis');
   });
 
   redis.on('error', (error) => {
     console.error('Redis connection error:', error);
+    // Don't exit on connection error, let retry strategy handle it
   });
 
   redis.on('ready', () => {
@@ -1031,25 +1058,25 @@ app.use(morgan('combined'));
 
 // Create uploads directory
 const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)){
-    fs.mkdirSync(uploadsDir, { recursive: true });
-    console.log('Uploads directory created:', uploadsDir);
-}
+fs.mkdir(uploadsDir, { recursive: true })
+  .then(() => console.log('Uploads directory created:', uploadsDir))
+  .catch(err => console.error('Error creating uploads directory:', err));
 
-// Rate limiting configuration
+// Rate limiting configuration with Redis
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  message: 'Too many requests from this IP, please try again later.'
+  message: 'Too many requests from this IP, please try again later.',
+  skip: (req) => process.env.NODE_ENV === 'development'
 });
 app.use(limiter);
 
 // CORS configuration
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production'
-    ? ['https://www.vidcleaner.com']
+    ? ['https://vidcleaner.vercel.app', 'https://www.vidcleaner.com']
     : ['http://localhost:3000'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -1064,19 +1091,28 @@ app.use(bodyParser.json({ limit: '300mb' }));
 app.use(bodyParser.urlencoded({ limit: '300mb', extended: true }));
 
 // MongoDB connection with enhanced error handling
-mongoose.connect(process.env.MONGODB_URI, {
-  dbName: 'vidcleaner',
-  serverSelectionTimeoutMS: 5000,
-  socketTimeoutMS: 45000,
-})
-.then(() => console.log('MongoDB connected successfully'))
-.catch(err => {
-  console.error('MongoDB connection error:', err);
-  process.exit(1);
-});
+const connectMongoDB = async () => {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI, {
+      dbName: 'vidcleaner',
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+      useUnifiedTopology: true
+    });
+    console.log('MongoDB connected successfully');
+  } catch (err) {
+    console.error('MongoDB connection error:', err);
+    process.exit(1);
+  }
+};
 
 mongoose.connection.on('error', err => {
   console.error('MongoDB error:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.log('MongoDB disconnected. Attempting to reconnect...');
+  setTimeout(connectMongoDB, 5000);
 });
 
 app.set('trust proxy', 1);
@@ -1105,7 +1141,7 @@ app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/user', userRoutes);
 app.use('/admin', adminRoutes);
 
-// Video queue processing
+// Video queue processing with improved error handling
 videoQueue.process(async (job) => {
   const { inputPath, outputPath } = job.data;
   
@@ -1158,28 +1194,28 @@ videoQueue.on('progress', (job, progress) => {
   console.log(`Job ${job.id} is ${progress}% complete`);
 });
 
-// Cleanup function
+// Improved cleanup function with error handling
 async function cleanupUploads() {
   try {
-    const files = await fs.promises.readdir(uploadsDir);
-    const now = new Date();
+    const files = await fs.readdir(uploadsDir);
+    const now = Date.now();
     let deletedCount = 0;
 
-    for (const file of files) {
+    await Promise.all(files.map(async (file) => {
       const filePath = path.join(uploadsDir, file);
       try {
-        const stats = await fs.promises.stat(filePath);
-        const fileAge = now - stats.mtime;
+        const stats = await fs.stat(filePath);
+        const fileAge = now - stats.mtimeMs;
         
-        if (fileAge > 3600000) {
-          await fs.promises.unlink(filePath);
+        if (fileAge > 3600000) { // 1 hour
+          await fs.unlink(filePath);
           deletedCount++;
           console.log(`Deleted old file: ${file}`);
         }
       } catch (error) {
         console.error(`Error processing file ${file}:`, error);
       }
-    }
+    }));
     
     console.log(`Cleanup completed. Deleted ${deletedCount} files`);
   } catch (error) {
@@ -1250,12 +1286,15 @@ process.on('unhandledRejection', (reason, promise) => {
   handleFatalError(reason);
 });
 
-// Server startup with simplified Redis check
+// Server startup with health checks
 async function startServer() {
   try {
-    // Simple Redis ping test
+    // Verify Redis connection
     await redis.ping();
     console.log('Redis connection verified');
+
+    // Connect to MongoDB
+    await connectMongoDB();
 
     // Start HTTP server
     server = app.listen(PORT, () => {
