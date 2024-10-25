@@ -386,92 +386,193 @@ module.exports = router; */
 
 const express = require('express');
 const path = require('path');
-const fs = require('fs');
+const fs = require('fs').promises;
 const multer = require('multer');
-const { videoQueue } = require('../queue'); // Import from queue.js
+const { videoQueue } = require('../queue');
+const archiver = require('archiver');
 
 const router = express.Router();
 const uploadsDir = path.join(__dirname, '../uploads');
+
+// Ensure uploads directory exists
+fs.mkdir(uploadsDir, { recursive: true }).catch(err => {
+  console.error('Error creating uploads directory:', err);
+});
 
 const upload = multer({ 
   dest: uploadsDir,
   limits: { 
     fileSize: 300 * 1024 * 1024,
-    fieldSize: 300 * 1024 * 1024
+    fieldSize: 300 * 1024 * 1024 
   }
 });
 
-router.post('/process-videos', upload.array('videos', 10), async (req, res) => {
-  const videoFiles = req.files;
-  if (!videoFiles || videoFiles.length === 0) {
-    return res.status(400).json({ message: 'No video files uploaded' });
-  }
+// Helper function to manage video processing jobs
+const createVideoProcessingJob = async (videoFile) => {
+  const inputFilePath = path.join(uploadsDir, videoFile.filename);
+  const outputFilePath = path.join(uploadsDir, `processed_${videoFile.filename}.mp4`);
 
-  const totalSize = videoFiles.reduce((acc, file) => acc + file.size, 0);
-  if (totalSize > 300 * 1024 * 1024) {
-    return res.status(400).json({ message: 'Total file size exceeds 300MB limit' });
-  }
-
-  const jobIds = [];
-
-  for (const videoFile of videoFiles) {
-    const inputFilePath = path.join(uploadsDir, videoFile.filename);
-    const outputFilePath = path.join(uploadsDir, `processed_${videoFile.filename}.mp4`);
-
+  try {
     const job = await videoQueue.add({
       inputPath: inputFilePath,
       outputPath: outputFilePath,
       originalName: videoFile.originalname
+    }, {
+      attempts: 3,
+      backoff: {
+        type: 'exponential',
+        delay: 2000
+      },
+      timeout: 1800000, // 30 minutes
+      removeOnComplete: false,
+      removeOnFail: false
     });
 
-    jobIds.push(job.id);
+    return {
+      jobId: job.id,
+      originalName: videoFile.originalname,
+      inputPath: inputFilePath,
+      outputPath: outputFilePath
+    };
+  } catch (error) {
+    console.error('Error creating job:', error);
+    throw error;
   }
+};
 
-  res.status(202).json({ 
-    message: 'Video processing jobs queued',
-    jobIds: jobIds
-  });
-});
-
-router.get('/job-status/:jobId', async (req, res) => {
-  const jobId = req.params.jobId;
-  const job = await videoQueue.getJob(jobId);
-
-  if (job === null) {
-    return res.status(404).json({ message: 'Job not found' });
-  }
-
-  const state = await job.getState();
-  const progress = job._progress;
-  const result = job.returnvalue;
-
-  res.json({ jobId, state, progress, result });
-});
-
-router.get('/download-processed/:jobId', async (req, res) => {
-  const jobId = req.params.jobId;
-  const job = await videoQueue.getJob(jobId);
-
-  if (job === null) {
-    return res.status(404).json({ message: 'Job not found' });
-  }
-
-  const state = await job.getState();
-  if (state !== 'completed') {
-    return res.status(400).json({ message: 'Job not completed yet' });
-  }
-
-  const { outputPath } = job.returnvalue;
-
-  res.download(outputPath, path.basename(outputPath), (err) => {
-    if (err) {
-      console.error('Error sending the processed file:', err);
+router.post('/process-videos', upload.array('videos', 10), async (req, res) => {
+  try {
+    const videoFiles = req.files;
+    if (!videoFiles?.length) {
+      return res.status(400).json({ message: 'No video files uploaded' });
     }
-    // Clean up the file after sending
-    fs.unlink(outputPath, (unlinkErr) => {
-      if (unlinkErr) console.error('Error deleting file after download:', unlinkErr);
+
+    const totalSize = videoFiles.reduce((acc, file) => acc + file.size, 0);
+    if (totalSize > 300 * 1024 * 1024) {
+      return res.status(400).json({ message: 'Total file size exceeds 300MB limit' });
+    }
+
+    // Create jobs for all videos
+    const jobPromises = videoFiles.map(file => createVideoProcessingJob(file));
+    const jobs = await Promise.all(jobPromises);
+
+    res.status(202).json({
+      message: 'Video processing jobs queued',
+      jobs: jobs.map(({ jobId, originalName }) => ({ jobId, originalName }))
     });
-  });
+  } catch (error) {
+    console.error('Error processing videos:', error);
+    res.status(500).json({ message: 'Error processing videos', error: error.message });
+  }
+});
+
+router.get('/job-status', async (req, res) => {
+  try {
+    if (!req.query.jobIds) {
+      return res.status(400).json({ message: 'No job IDs provided' });
+    }
+
+    const jobIds = req.query.jobIds.split(',');
+    const statuses = await Promise.all(jobIds.map(async (jobId) => {
+      const job = await videoQueue.getJob(jobId);
+      if (!job) return { jobId, status: 'not_found', progress: 0 };
+      
+      const state = await job.getState();
+      return {
+        jobId,
+        originalName: job.data.originalName,
+        status: state,
+        progress: job._progress || 0,
+        error: job.failedReason
+      };
+    }));
+
+    const allCompleted = statuses.every(s => s.status === 'completed');
+    const anyFailed = statuses.some(s => s.status === 'failed');
+
+    res.json({
+      statuses,
+      allCompleted,
+      anyFailed,
+      overallProgress: statuses.reduce((acc, s) => acc + s.progress, 0) / statuses.length
+    });
+  } catch (error) {
+    console.error('Error checking job status:', error);
+    res.status(500).json({ message: 'Error checking job status', error: error.message });
+  }
+});
+
+router.get('/download-processed', async (req, res) => {
+  if (!req.query.jobIds) {
+    return res.status(400).json({ message: 'No job IDs provided' });
+  }
+
+  const jobIds = req.query.jobIds.split(',');
+  const jobs = await Promise.all(jobIds.map(id => videoQueue.getJob(id)));
+  const validJobs = jobs.filter(job => job != null);
+
+  if (validJobs.length === 0) {
+    return res.status(404).json({ message: 'No valid jobs found' });
+  }
+
+  try {
+    // Check if all jobs are complete
+    const jobStates = await Promise.all(validJobs.map(job => job.getState()));
+    if (!jobStates.every(state => state === 'completed')) {
+      return res.status(400).json({ message: 'Not all videos are processed yet' });
+    }
+
+    // Create zip archive
+    const archive = archiver('zip', { zlib: { level: 5 } });
+    res.attachment('processed_videos.zip');
+    archive.pipe(res);
+
+    // Add processed videos to zip
+    for (const job of validJobs) {
+      const outputPath = job.returnvalue?.outputPath;
+      const originalName = job.data.originalName;
+      if (outputPath) {
+        try {
+          await fs.access(outputPath);
+          archive.file(outputPath, { name: `processed_${originalName}` });
+        } catch (error) {
+          console.error(`File not found: ${outputPath}`);
+        }
+      }
+    }
+
+    // Handle archive events
+    archive.on('error', err => {
+      console.error('Archive error:', err);
+      res.status(500).end();
+    });
+
+    archive.on('end', () => {
+      console.log('Archive completed');
+    });
+
+    // Finalize the archive
+    await archive.finalize();
+
+    // Clean up files after successful download
+    for (const job of validJobs) {
+      try {
+        const { inputPath } = job.data;
+        const { outputPath } = job.returnvalue || {};
+
+        if (outputPath) await fs.unlink(outputPath).catch(() => {});
+        if (inputPath) await fs.unlink(inputPath).catch(() => {});
+
+        // Remove the job from the queue
+        await job.remove();
+      } catch (error) {
+        console.error(`Error cleaning up job ${job.id}:`, error);
+      }
+    }
+  } catch (error) {
+    console.error('Error processing download:', error);
+    res.status(500).json({ message: 'Error processing download', error: error.message });
+  }
 });
 
 module.exports = router;
