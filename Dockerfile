@@ -33,11 +33,13 @@ RUN useradd -m appuser && \
 
 WORKDIR /usr/src/app
 
-# Copy package files first to leverage Docker cache
+# Copy package files first
 COPY --chown=appuser:appuser backend/package*.json ./
 
-# Install dependencies
-RUN npm install --production
+# Clear npm cache and install dependencies
+RUN npm cache clean --force && \
+    npm install --production --verbose && \
+    npm install node-cron@3.0.2
 
 # Copy the rest of the application
 COPY --chown=appuser:appuser backend ./
