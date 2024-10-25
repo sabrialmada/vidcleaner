@@ -36,10 +36,24 @@ WORKDIR /usr/src/app
 # Copy package files first
 COPY --chown=appuser:appuser backend/package*.json ./
 
-# Clear npm cache and install dependencies
-RUN npm cache clean --force && \
-    npm install --production --verbose && \
-    npm install node-cron@3.0.2
+# Install all required dependencies explicitly
+RUN npm install -g npm@latest && \
+    npm cache clean --force && \
+    npm install --production \
+    express@4.18.2 \
+    node-cron@3.0.2 \
+    bull@4.10.4 \
+    ioredis@5.3.2 \
+    fluent-ffmpeg@2.1.2 \
+    multer@1.4.5-lts.1 \
+    cors@2.8.5 \
+    helmet@7.0.0 \
+    compression@1.7.4 \
+    express-rate-limit@6.9.0 \
+    morgan@1.10.0 \
+    mongoose@7.5.0 \
+    archiver@5.3.1 \
+    dotenv@16.3.1
 
 # Copy the rest of the application
 COPY --chown=appuser:appuser backend ./
