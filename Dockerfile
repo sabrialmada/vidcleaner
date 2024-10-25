@@ -37,7 +37,7 @@ WORKDIR /usr/src/app
 COPY --chown=appuser:appuser backend/package*.json ./
 
 # Install dependencies
-RUN npm ci --only=production
+RUN npm install --production
 
 # Copy the rest of the application
 COPY --chown=appuser:appuser backend ./
