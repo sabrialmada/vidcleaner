@@ -2,7 +2,7 @@ FROM node:20-slim
 
 # Install FFmpeg, Chromium, curl, and other necessary tools
 RUN apt-get update && \
-    apt-get install -y \
+    apt-get install -y --no-install-recommends \
     ffmpeg \
     chromium \
     curl \
@@ -38,9 +38,6 @@ COPY --chown=appuser:appuser backend ./
 
 # Switch to non-root user
 USER appuser
-
-# Create volume for uploads
-VOLUME /usr/src/app/uploads
 
 EXPOSE 5000
 
