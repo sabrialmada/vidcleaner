@@ -40,32 +40,33 @@ const redisClientConfig = {
 };
 
 const queueOptions = {
-  redis: redisClientConfig,
-  prefix: 'bull',
-  limiter: {
-    max: 1, // Only process one job at a time
-    duration: 5000 // Wait 5 seconds before processing next job
-  },
-  settings: {
-    lockDuration: 300000, // 5 minutes
-    stalledInterval: 30000,
-    maxStalledCount: 2,
-    lockRenewTime: 15000 // Renew locks every 15 seconds
-  },
-  defaultJobOptions: {
-    attempts: 3,
-    backoff: {
-      type: 'exponential',
-      delay: 2000
+    redis: redisClientConfig,
+    prefix: 'bull',
+    limiter: {
+      max: 3, // Increase concurrent processing limit to 3
+      duration: 1000 // Reduce duration to 1 second
     },
-    removeOnComplete: {
-      age: 3600, // Keep completed jobs for 1 hour
-      count: 100 // Keep last 100 completed jobs
+    settings: {
+      lockDuration: 300000, // 5 minutes
+      stalledInterval: 30000,
+      maxStalledCount: 2,
+      lockRenewTime: 15000,
+      drainDelay: 300 // Add small delay between processing jobs
     },
-    removeOnFail: false,
-    timeout: 1800000 // 30 minutes
-  }
-};
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: {
+        type: 'exponential',
+        delay: 2000
+      },
+      removeOnComplete: {
+        age: 3600,
+        count: 100
+      },
+      removeOnFail: false,
+      timeout: 1800000 // 30 minutes
+    }
+  };
 
 console.log('Initializing queue with Redis config:', {
   host: redisConfig.host,
