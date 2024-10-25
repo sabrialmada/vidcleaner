@@ -603,7 +603,7 @@ const VideoCleaner = () => {
 export default VideoCleaner;
  */
 
-import React, { useState } from 'react';
+/* import React, { useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import './VideoCleaner.css';
@@ -751,6 +751,213 @@ const VideoCleaner = () => {
           Supported Formats: Ensure your video files are in one of the supported formats (e.g., MP4, AVI, MOV).
           <br />
           Multiple File Selection: You can select and upload multiple video files at once for your convenience.
+        </p>
+      </div>
+    </div>
+  );
+};
+
+export default VideoCleaner; */
+
+import React, { useState } from 'react';
+import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
+import './VideoCleaner.css';
+import { API_BASE_URL } from '../../config';
+
+const VideoCleaner = () => {
+  const [fileNames, setFileNames] = useState([]);
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [progress, setProgress] = useState({});
+  const [activeJobIds, setActiveJobIds] = useState([]);
+  const navigate = useNavigate();
+
+  const checkJobStatus = async (jobIds) => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/job-status`, {
+        params: { jobIds: jobIds.join(',') },
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+
+      const { statuses, allCompleted } = response.data;
+      
+      // Update progress for each job
+      const newProgress = {};
+      statuses.forEach(({ jobId, status, progress, originalName }) => {
+        newProgress[jobId] = {
+          status,
+          progress: progress || 0,
+          originalName
+        };
+      });
+      setProgress(newProgress);
+
+      if (allCompleted) {
+        await downloadProcessedVideos(jobIds);
+        setIsProcessing(false);
+        setActiveJobIds([]);
+      } else {
+        // Continue polling
+        setTimeout(() => checkJobStatus(jobIds), 2000);
+      }
+    } catch (error) {
+      console.error('Error checking job status:', error);
+      setIsProcessing(false);
+      alert('Error checking processing status. Please try again.');
+    }
+  };
+
+  const downloadProcessedVideos = async (jobIds) => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/download-processed`, {
+        params: { jobIds: jobIds.join(',') },
+        responseType: 'blob',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'processed_videos.zip');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error downloading processed videos:', error);
+      alert('Error downloading videos. Please try again.');
+    }
+  };
+
+  const handleFileChange = (event) => {
+    const files = event.target.files;
+    setSelectedFiles(files);
+    setFileNames(Array.from(files).map(file => file.name));
+  };
+
+  const checkSubscription = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        navigate('/login');
+        return false;
+      }
+  
+      const response = await axios.get(`${API_BASE_URL}/api/subscriptions/status`, { 
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      return response.data.isSubscribed;
+    } catch (error) {
+      console.error('Error checking subscription:', error);
+      if (error.response?.status === 401 || error.response?.status === 403) {
+        navigate('/login');
+      }
+      return false;
+    }
+  };
+
+  const handleClean = async () => {
+    if (selectedFiles.length === 0) {
+      alert("Please upload video files.");
+      return;
+    }
+
+    const isSubscribed = await checkSubscription();
+    if (!isSubscribed) {
+      navigate('/subscription');
+      return;
+    }
+
+    setIsProcessing(true);
+    const formData = new FormData();
+    for (let i = 0; i < selectedFiles.length; i++) {
+      formData.append('videos', selectedFiles[i]);
+    }
+
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.post(`${API_BASE_URL}/api/process-videos`, formData, {
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+
+      const jobIds = response.data.jobs.map(job => job.jobId);
+      setActiveJobIds(jobIds);
+      checkJobStatus(jobIds);
+    } catch (error) {
+      console.error('Error processing videos:', error);
+      setIsProcessing(false);
+      if (error.response?.status === 401) {
+        navigate('/login');
+      } else {
+        alert('Failed to process videos. Please try again later.');
+      }
+    }
+  };
+
+  return (
+    <div className="video-cleaner-container">
+      <h2>Video Cleaner</h2>
+
+      <div className="file-upload">
+        <label htmlFor="fileUpload" className="upload-btn">
+          Upload Files
+        </label>
+        <input 
+          type="file" 
+          id="fileUpload" 
+          accept="video/*" 
+          onChange={handleFileChange} 
+          className="file-input" 
+          multiple
+          disabled={isProcessing}
+        />
+        <input 
+          type="text" 
+          value={fileNames.join(', ')} 
+          placeholder="No files selected" 
+          readOnly 
+          className="file-name-display" 
+        />
+        <button 
+          onClick={handleClean} 
+          className="clean-btn" 
+          disabled={isProcessing}
+        >
+          {isProcessing ? 'Processing...' : 'Clean'}
+        </button>
+      </div>
+
+      {isProcessing && (
+        <div className="progress-container">
+          {Object.entries(progress).map(([jobId, { status, progress, originalName }]) => (
+            <div key={jobId} className="progress-item">
+              <div className="progress-label">{originalName || `Video ${jobId}`}</div>
+              <div className="progress-bar">
+                <div 
+                  className="progress-fill" 
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              <div className="progress-text">
+                {`${status.charAt(0).toUpperCase() + status.slice(1)} - ${Math.round(progress)}%`}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="info-box">
+        <p>
+          Our platform only accepts video files. Please do not upload ZIP files, directories, or any other types of files.
+          <br />
+          Supported Formats: MP4, AVI, MOV
+          <br />
+          Multiple File Selection: You can select and upload multiple video files at once.
         </p>
       </div>
     </div>
