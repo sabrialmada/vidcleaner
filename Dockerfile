@@ -2,43 +2,51 @@ FROM node:20-slim
 
 # Install FFmpeg, Chromium, curl, and other necessary tools
 RUN apt-get update && \
-    apt-get install -y ffmpeg chromium curl procps && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y \
+    ffmpeg \
+    chromium \
+    curl \
+    procps \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Download and install yt-dlp
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
-    chmod a+rx /usr/local/bin/yt-dlp
-
-# Verify yt-dlp installation
-RUN yt-dlp --version
+    chmod a+rx /usr/local/bin/yt-dlp && \
+    yt-dlp --version
 
 # Set up environment for Puppeteer
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD true
-ENV PUPPETEER_EXECUTABLE_PATH /usr/bin/chromium
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+    NODE_ENV=production
 
-# Create a non-root user
-RUN useradd -m appuser
+# Create a non-root user and setup working directory
+RUN useradd -m appuser && \
+    mkdir -p /usr/src/app/uploads && \
+    chown -R appuser:appuser /usr/src/app
 
 WORKDIR /usr/src/app
 
-# Copy package.json and package-lock.json from the backend folder
-COPY backend/package*.json ./
+# Copy package files first to leverage Docker cache
+COPY --chown=appuser:appuser backend/package*.json ./
 
-# Install dependencies, including node-cron and bull
-RUN npm install --only=production && \
-    npm install node-cron bull
+# Install dependencies
+RUN npm ci --only=production
 
-# Copy the backend folder content
-COPY backend ./
-
-# Change ownership of the app files to the non-root user
-RUN chown -R appuser:appuser /usr/src/app
+# Copy the rest of the application
+COPY --chown=appuser:appuser backend ./
 
 # Switch to non-root user
 USER appuser
 
+# Create volume for uploads
+VOLUME /usr/src/app/uploads
+
 EXPOSE 5000
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:5000/health || exit 1
 
 # Start the server
 CMD ["node", "server.js"]
