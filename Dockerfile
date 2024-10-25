@@ -1,14 +1,18 @@
 FROM node:20-slim
 
-# Install FFmpeg, Chromium, curl, and other necessary tools
+# Install FFmpeg, Chromium, curl, certificates and other necessary tools
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ffmpeg \
     chromium \
     curl \
     procps \
+    ca-certificates \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Update certificates
+RUN update-ca-certificates
 
 # Download and install yt-dlp
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
