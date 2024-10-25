@@ -8,6 +8,8 @@ RUN apt-get update && \
     curl \
     procps \
     ca-certificates \
+    python3 \
+    python3-pip \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
