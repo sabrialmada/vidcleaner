@@ -571,11 +571,22 @@ async function safeDelete(filePath) {
   }
 }
 
-async function processVideo(inputPath, outputPath) {
+async function processVideo(inputPath, outputPath, job) {
   const tempFiles = [];
   try {
+    // Add job cancellation check
+    const checkCancellation = async () => {
+      if (job) {
+        const state = await job.getState();
+        if (['removed', 'failed'].includes(state)) {
+          throw new Error('Job was cancelled or failed');
+        }
+      }
+    };
+
     console.log(`Starting video processing for: ${inputPath}`);
     
+    await checkCancellation();
     await fs.access(inputPath, fs.constants.R_OK);
     console.log(`Input file verified: ${inputPath}`);
 
@@ -587,22 +598,27 @@ async function processVideo(inputPath, outputPath) {
     const tempFile2 = path.join(tempDir, `temp_video_2_${Date.now()}.mp4`);
     tempFiles.push(tempFile1, tempFile2);
 
+    await checkCancellation();
     console.log('Removing metadata...');
     await removeMetadata(inputPath, tempFile1);
     console.log('Metadata removed successfully.');
 
+    await checkCancellation();
     console.log('Modifying video...');
     await modifyVideo(tempFile1, tempFile2);
     console.log('Video modified successfully.');
 
+    await checkCancellation();
     console.log('Adjusting audio...');
     await adjustAudio(tempFile2, tempFile1);
     console.log('Audio adjusted successfully.');
 
+    await checkCancellation();
     console.log('Re-encoding video...');
     await reencodeVideo(tempFile1, tempFile2);
     console.log('Video re-encoded successfully.');
 
+    await checkCancellation();
     console.log('Changing color space...');
     await changeColorSpace(tempFile2, outputPath);
     console.log('Color space changed successfully.');
@@ -616,6 +632,7 @@ async function processVideo(inputPath, outputPath) {
     console.error('Error in processVideo:', error);
     throw error;
   } finally {
+    // Clean up temp files
     for (const file of tempFiles) {
       try {
         await safeDelete(file);

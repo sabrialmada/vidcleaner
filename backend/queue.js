@@ -39,19 +39,32 @@ const redisClientConfig = {
   keepAlive: 30000
 };
 
+const handleJobRemoval = async (job) => {
+    console.log(`Job ${job.id} was removed`);
+    try {
+      const inputPath = job.data.inputPath;
+      const outputPath = job.returnvalue?.outputPath;
+  
+      if (inputPath) await fs.unlink(inputPath).catch(() => {});
+      if (outputPath) await fs.unlink(outputPath).catch(() => {});
+    } catch (error) {
+      console.error(`Error cleaning up files for job ${job.id}:`, error);
+    }
+  };
+
 const queueOptions = {
     redis: redisClientConfig,
     prefix: 'bull',
     limiter: {
-      max: 3, // Increase concurrent processing limit to 3
-      duration: 1000 // Reduce duration to 1 second
+      max: 3,
+      duration: 1000
     },
     settings: {
-      lockDuration: 300000, // 5 minutes
+      lockDuration: 300000,
       stalledInterval: 30000,
       maxStalledCount: 2,
       lockRenewTime: 15000,
-      drainDelay: 300 // Add small delay between processing jobs
+      drainDelay: 300
     },
     defaultJobOptions: {
       attempts: 3,
@@ -63,8 +76,8 @@ const queueOptions = {
         age: 3600,
         count: 100
       },
-      removeOnFail: false,
-      timeout: 1800000 // 30 minutes
+      removeOnFail: true,
+      timeout: 1800000
     }
   };
 
@@ -78,19 +91,21 @@ console.log('Initializing queue with Redis config:', {
 const videoQueue = new Queue('video-processing', process.env.REDIS_URL, queueOptions);
 
 // Enhanced error handling and logging
+videoQueue.on('removed', handleJobRemoval);
+
 videoQueue.on('error', (error) => {
   console.error('Queue Error:', error);
 });
 
-videoQueue.on('failed', (job, error) => {
-  console.error(`Job ${job.id} failed with error:`, error);
-  console.error('Job data:', job.data);
-  
-  // Notify about repeated failures
-  if (job.attemptsMade >= job.opts.attempts) {
-    console.error(`Job ${job.id} has failed all ${job.opts.attempts} attempts`);
-  }
-});
+videoQueue.on('failed', async (job, error) => {
+    console.error(`Job ${job.id} failed with error:`, error);
+    console.error('Job data:', job.data);
+    
+    if (job.attemptsMade >= job.opts.attempts) {
+      console.error(`Job ${job.id} has failed all ${job.opts.attempts} attempts`);
+      await handleJobRemoval(job);
+    }
+  });
 
 videoQueue.on('stalled', (job) => {
   console.warn(`Job ${job.id} has stalled`);
@@ -110,40 +125,32 @@ videoQueue.on('active', (job) => {
 
 // Cleanup function for abandoned jobs with improved error handling
 async function cleanupStalledJobs() {
-  try {
-    const jobTypes = ['failed', 'stalled', 'delayed'];
-    const jobs = await Promise.all(jobTypes.map(type => videoQueue.getJobs([type])));
-    const allJobs = jobs.flat();
-    
-    console.log(`Found ${allJobs.length} jobs to check for cleanup`);
-    
-    for (const job of allJobs) {
-      try {
-        const state = await job.getState();
-        const jobAge = Date.now() - job.timestamp;
-        
-        if ((state === 'failed' || state === 'stalled') && jobAge > 3600000) {
-          console.log(`Cleaning up old ${state} job ${job.id}`);
-          await job.remove();
+    try {
+      const jobTypes = ['failed', 'stalled', 'delayed', 'active'];
+      const jobs = await Promise.all(jobTypes.map(type => videoQueue.getJobs([type])));
+      const allJobs = jobs.flat();
+      
+      console.log(`Found ${allJobs.length} jobs to check for cleanup`);
+      
+      const now = Date.now();
+      for (const job of allJobs) {
+        try {
+          const state = await job.getState();
+          const jobAge = now - job.timestamp;
           
-          // Clean up any associated files
-          if (job.data.inputPath) {
-            try {
-              const fs = require('fs').promises;
-              await fs.unlink(job.data.inputPath);
-              console.log(`Cleaned up input file for job ${job.id}`);
-            } catch (fileError) {
-              console.error(`Error cleaning up file for job ${job.id}:`, fileError);
-            }
+          // Clean up jobs that are too old or in bad states
+          if (jobAge > 3600000 || ['failed', 'stalled'].includes(state)) {
+            console.log(`Cleaning up ${state} job ${job.id} (age: ${jobAge}ms)`);
+            await handleJobRemoval(job);
+            await job.remove();
           }
+        } catch (error) {
+          console.error(`Error processing job ${job.id}:`, error);
         }
-      } catch (jobError) {
-        console.error(`Error processing job ${job.id}:`, jobError);
       }
+    } catch (error) {
+      console.error('Error in cleanup process:', error);
     }
-  } catch (error) {
-    console.error('Error in cleanup process:', error);
-  }
 }
 
 // Run cleanup every hour

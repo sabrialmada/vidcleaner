@@ -773,6 +773,43 @@ const VideoCleaner = () => {
   const [activeJobIds, setActiveJobIds] = useState([]);
   const navigate = useNavigate();
 
+  // Cleanup function
+  const cleanup = async () => {
+    if (activeJobIds.length > 0) {
+      try {
+        await axios.post(`${API_BASE_URL}/api/cancel-jobs`, {
+          jobIds: activeJobIds
+        }, {
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+      } catch (error) {
+        console.error('Error canceling jobs:', error);
+      }
+    }
+  };
+
+  // Handle component unmount
+  useEffect(() => {
+    // Add beforeunload event listener
+    const handleBeforeUnload = (e) => {
+      if (isProcessing) {
+        e.preventDefault();
+        e.returnValue = 'Changes you made may not be saved.';
+        cleanup();
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    // Cleanup on component unmount
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      if (isProcessing) {
+        cleanup();
+      }
+    };
+  }, [isProcessing, activeJobIds]);
+
   const checkJobStatus = async (jobIds) => {
     try {
       const response = await axios.get(`${API_BASE_URL}/api/job-status`, {

@@ -440,6 +440,43 @@ const createVideoProcessingJob = async (videoFile) => {
   }
 };
 
+router.post('/cancel-jobs', async (req, res) => {
+  try {
+    const { jobIds } = req.body;
+    if (!jobIds || !Array.isArray(jobIds)) {
+      return res.status(400).json({ message: 'Invalid job IDs' });
+    }
+
+    console.log(`Cancelling jobs: ${jobIds.join(', ')}`);
+    
+    await Promise.all(jobIds.map(async (jobId) => {
+      const job = await videoQueue.getJob(jobId);
+      if (job) {
+        // Check if job has any files to clean up
+        const inputPath = job.data.inputPath;
+        const outputPath = job.returnvalue?.outputPath;
+
+        // Remove job from queue
+        await job.remove();
+        console.log(`Job ${jobId} removed from queue`);
+
+        // Clean up files
+        try {
+          if (inputPath) await fs.unlink(inputPath).catch(() => {});
+          if (outputPath) await fs.unlink(outputPath).catch(() => {});
+        } catch (error) {
+          console.error(`Error cleaning up files for job ${jobId}:`, error);
+        }
+      }
+    }));
+
+    res.json({ message: 'Jobs cancelled successfully' });
+  } catch (error) {
+    console.error('Error cancelling jobs:', error);
+    res.status(500).json({ message: 'Error cancelling jobs', error: error.message });
+  }
+});
+
 router.post('/process-videos', upload.array('videos', 10), async (req, res) => {
   try {
     const videoFiles = req.files;
