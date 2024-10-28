@@ -1145,6 +1145,12 @@ app.use('/admin', adminRoutes);
 videoQueue.process(async (job) => {
   const { inputPath, outputPath } = job.data;
   
+  // Check if job was already cancelled
+  const state = await job.getState();
+  if (state === 'removed') {
+    throw new Error('Job cancelled');
+  }
+
   job.progress(0);
   console.log(`Starting job ${job.id} for input: ${inputPath}`);
 
@@ -1155,12 +1161,28 @@ videoQueue.process(async (job) => {
 
     let progressInterval;
     try {
-      progressInterval = setInterval(() => {
+      progressInterval = setInterval(async () => {
+        // Check if job was cancelled during processing
+        const currentState = await job.getState();
+        if (currentState === 'removed') {
+          clearInterval(progressInterval);
+          clearTimeout(timeout);
+          reject(new Error('Job cancelled during processing'));
+          return;
+        }
         job.progress(Math.min(job.progress() + 10, 90));
       }, 5000);
 
-      const result = await processVideo(inputPath, outputPath);
+      // Pass job to processVideo for cancellation checks
+      const result = await processVideo(inputPath, outputPath, job);
       
+      // Check one final time if job was cancelled
+      const finalState = await job.getState();
+      if (finalState === 'removed') {
+        reject(new Error('Job cancelled before completion'));
+        return;
+      }
+
       job.progress(100);
       console.log(`Job ${job.id} completed successfully`);
       resolve(result);
@@ -1174,20 +1196,49 @@ videoQueue.process(async (job) => {
       try {
         await safeDelete(inputPath);
         console.log(`Input file deleted for job ${job.id}: ${inputPath}`);
+        
+        // Clean up output file if job was cancelled
+        const jobState = await job.getState();
+        if (jobState === 'removed' && outputPath) {
+          await safeDelete(outputPath);
+          console.log(`Output file deleted for cancelled job ${job.id}: ${outputPath}`);
+        }
       } catch (deleteError) {
-        console.error(`Error deleting input file for job ${job.id}:`, deleteError);
+        console.error(`Error deleting files for job ${job.id}:`, deleteError);
       }
     }
   });
 });
 
-// Queue event handlers
-videoQueue.on('completed', (job, result) => {
+// Add these queue event handlers
+videoQueue.on('removed', async (job) => {
+  console.log(`Job ${job.id} was removed, cleaning up...`);
+  try {
+    const { inputPath } = job.data;
+    const { outputPath } = job.returnvalue || {};
+
+    if (inputPath) await safeDelete(inputPath).catch(() => {});
+    if (outputPath) await safeDelete(outputPath).catch(() => {});
+  } catch (error) {
+    console.error(`Error cleaning up removed job ${job.id}:`, error);
+  }
+});
+
+videoQueue.on('completed', async (job, result) => {
   console.log(`Job ${job.id} completed with result:`, result);
 });
 
-videoQueue.on('failed', (job, err) => {
+videoQueue.on('failed', async (job, err) => {
   console.error(`Job ${job.id} failed with error:`, err);
+  try {
+    const { inputPath } = job.data;
+    const { outputPath } = job.returnvalue || {};
+
+    if (inputPath) await safeDelete(inputPath).catch(() => {});
+    if (outputPath) await safeDelete(outputPath).catch(() => {});
+  } catch (error) {
+    console.error(`Error cleaning up failed job ${job.id}:`, error);
+  }
 });
 
 videoQueue.on('progress', (job, progress) => {

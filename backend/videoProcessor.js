@@ -571,7 +571,7 @@ async function safeDelete(filePath) {
   }
 }
 
-async function processVideo(inputPath, outputPath, job) {
+async function processVideo(inputPath, outputPath, job) {  // Added job parameter
   const tempFiles = [];
   try {
     // Add job cancellation check
