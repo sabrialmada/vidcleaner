@@ -23,28 +23,18 @@ const parseRedisUrl = (url) => {
 
 const redisConfig = parseRedisUrl(process.env.REDIS_URL);
 
+// Simplified Redis client config - removed problematic options
 const redisClientConfig = {
   port: redisConfig.port,
   host: redisConfig.host,
   password: redisConfig.password,
   tls: process.env.NODE_ENV === 'production' ? redisConfig.tls : undefined,
-  maxRetriesPerRequest: 3,
   retryStrategy: function(times) {
     const delay = Math.min(times * 50, 2000);
     console.log(`Retrying Redis connection in ${delay}ms...`);
     return delay;
   },
-  connectTimeout: 30000,
-  keepAlive: 30000,
-  enableReadyCheck: true,
-  maxRetriesPerRequest: 3,
-  reconnectOnError: function(err) {
-    const targetError = 'READONLY';
-    if (err.message.includes(targetError)) {
-      return true;
-    }
-    return false;
-  }
+  connectTimeout: 30000
 };
 
 // Enhanced job cleanup handler
@@ -60,7 +50,7 @@ const handleJobCleanup = async (job) => {
       inputPath,
       outputPath,
       ...tempFiles
-    ].filter(Boolean); // Remove undefined/null values
+    ].filter(Boolean);
 
     await Promise.all(filesToDelete.map(async (filePath) => {
       try {
@@ -90,9 +80,7 @@ const queueOptions = {
     stalledInterval: 30000,
     maxStalledCount: 2,
     lockRenewTime: 15000,
-    drainDelay: 300,
-    guardInterval: 5000,
-    retryProcessDelay: 5000
+    drainDelay: 300
   },
   defaultJobOptions: {
     attempts: 3,
@@ -105,8 +93,7 @@ const queueOptions = {
       count: 100
     },
     removeOnFail: true,
-    timeout: 1800000,
-    stackTraceLimit: 10
+    timeout: 1800000
   }
 };
 
@@ -118,7 +105,6 @@ console.log('Initializing queue with Redis config:', {
 
 const videoQueue = new Queue('video-processing', process.env.REDIS_URL, queueOptions);
 
-// Enhanced error handling and cleanup
 videoQueue.on('error', (error) => {
   console.error('Queue Error:', error);
 });
@@ -174,12 +160,7 @@ async function cleanupStalledJobs() {
         const state = await job.getState();
         const jobAge = now - job.timestamp;
         
-        const shouldCleanup = 
-          jobAge > 3600000 || // Older than 1 hour
-          ['failed', 'stalled'].includes(state) ||
-          job.data.cancelRequested;
-        
-        if (shouldCleanup) {
+        if (jobAge > 3600000 || ['failed', 'stalled'].includes(state)) {
           console.log(`Cleaning up ${state} job ${job.id} (age: ${jobAge}ms)`);
           await handleJobCleanup(job);
           await job.remove();
@@ -193,33 +174,15 @@ async function cleanupStalledJobs() {
   }
 }
 
-// Health check function
-async function checkQueueHealth() {
-  try {
-    await videoQueue.client.ping();
-    console.log('Queue health check: OK');
-  } catch (error) {
-    console.error('Queue health check failed:', error);
-  }
-}
-
 // Run cleanup every hour
 const CLEANUP_INTERVAL = 3600000;
 setInterval(cleanupStalledJobs, CLEANUP_INTERVAL);
 
-// Run health check every 5 minutes
-const HEALTH_CHECK_INTERVAL = 300000;
-setInterval(checkQueueHealth, HEALTH_CHECK_INTERVAL);
-
-// Initial cleanup and health check
-Promise.all([
-  cleanupStalledJobs(),
-  checkQueueHealth()
-]).catch(error => {
-  console.error('Initial queue setup failed:', error);
+// Initial cleanup
+cleanupStalledJobs().catch(error => {
+  console.error('Initial cleanup failed:', error);
 });
 
-// Graceful shutdown handler
 process.on('SIGTERM', async () => {
   try {
     await videoQueue.close();
