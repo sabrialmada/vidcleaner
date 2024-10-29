@@ -577,13 +577,18 @@ async function processVideo(inputPath, outputPath, job) {  // Added job paramete
     // Add job cancellation check
     const checkCancellation = async () => {
       if (job) {
-        const state = await job.getState();
-        if (['removed', 'failed'].includes(state)) {
+        const [state, jobData] = await Promise.all([
+          job.getState(),
+          job.data
+        ]);
+        
+        if (['removed', 'failed'].includes(state) || jobData.cancelRequested) {
           throw new Error('Job was cancelled or failed');
         }
       }
     };
 
+    await checkCancellation();
     console.log(`Starting video processing for: ${inputPath}`);
     
     await checkCancellation();

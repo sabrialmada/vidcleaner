@@ -449,28 +449,52 @@ router.post('/cancel-jobs', async (req, res) => {
 
     console.log(`Cancelling jobs: ${jobIds.join(', ')}`);
     
-    await Promise.all(jobIds.map(async (jobId) => {
+    const results = await Promise.allSettled(jobIds.map(async (jobId) => {
       const job = await videoQueue.getJob(jobId);
       if (job) {
-        // Check if job has any files to clean up
-        const inputPath = job.data.inputPath;
-        const outputPath = job.returnvalue?.outputPath;
+        const state = await job.getState();
+        
+        // If job is active, mark it for cancellation first
+        if (state === 'active') {
+          await job.update({ cancelRequested: true });
+          // Wait a moment for the job to respond to cancellation
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
 
-        // Remove job from queue
-        await job.remove();
-        console.log(`Job ${jobId} removed from queue`);
-
-        // Clean up files
+        // Check if job can be removed
         try {
+          // Clean up files first
+          const inputPath = job.data.inputPath;
+          const outputPath = job.returnvalue?.outputPath;
+
           if (inputPath) await fs.unlink(inputPath).catch(() => {});
           if (outputPath) await fs.unlink(outputPath).catch(() => {});
+
+          // Then remove the job
+          await job.remove();
+          console.log(`Job ${jobId} removed from queue`);
+          return { jobId, status: 'removed' };
         } catch (error) {
-          console.error(`Error cleaning up files for job ${jobId}:`, error);
+          console.error(`Error removing job ${jobId}:`, error);
+          return { jobId, status: 'error', error: error.message };
         }
       }
+      return { jobId, status: 'not_found' };
     }));
 
-    res.json({ message: 'Jobs cancelled successfully' });
+    const failedJobs = results
+      .filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && r.value.status === 'error'))
+      .map(r => r.value?.jobId || r.reason);
+
+    if (failedJobs.length > 0) {
+      console.error('Some jobs failed to cancel:', failedJobs);
+      res.status(207).json({
+        message: 'Some jobs failed to cancel',
+        results: results.map(r => r.value || { status: 'error', error: r.reason })
+      });
+    } else {
+      res.json({ message: 'Jobs cancelled successfully' });
+    }
   } catch (error) {
     console.error('Error cancelling jobs:', error);
     res.status(500).json({ message: 'Error cancelling jobs', error: error.message });
