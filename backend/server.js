@@ -1142,72 +1142,85 @@ app.use('/api/user', userRoutes);
 app.use('/admin', adminRoutes);
 
 // Video queue processing with improved error handling
+// In server.js, update the video queue processing section
+
 videoQueue.process(async (job) => {
   const { inputPath, outputPath } = job.data;
   
-  // Check if job was already cancelled
-  const state = await job.getState();
-  if (state === 'removed') {
+  // Initial state check
+  const initialState = await job.getState();
+  if (initialState === 'removed' || job.data.cancelRequested) {
     throw new Error('Job cancelled');
   }
 
   job.progress(0);
   console.log(`Starting job ${job.id} for input: ${inputPath}`);
 
-  return new Promise(async (resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error('Job timed out after 30 minutes'));
-    }, 30 * 60 * 1000);
+  let progressInterval;
+  let timeoutTimer;
 
-    let progressInterval;
-    try {
+  try {
+    await new Promise((resolve, reject) => {
+      // Set timeout
+      timeoutTimer = setTimeout(() => {
+        reject(new Error('Job timed out after 30 minutes'));
+      }, 30 * 60 * 1000);
+
+      // Set up progress monitoring
       progressInterval = setInterval(async () => {
-        // Check if job was cancelled during processing
-        const currentState = await job.getState();
-        if (currentState === 'removed') {
-          clearInterval(progressInterval);
-          clearTimeout(timeout);
-          reject(new Error('Job cancelled during processing'));
-          return;
+        try {
+          // Check if job was cancelled
+          const currentState = await job.getState();
+          const jobData = await job.data;
+          
+          if (currentState === 'removed' || jobData.cancelRequested) {
+            clearInterval(progressInterval);
+            clearTimeout(timeoutTimer);
+            reject(new Error('Job cancelled during processing'));
+            return;
+          }
+          
+          job.progress(Math.min(job.progress() + 10, 90));
+        } catch (error) {
+          console.error('Error in progress interval:', error);
         }
-        job.progress(Math.min(job.progress() + 10, 90));
       }, 5000);
 
-      // Pass job to processVideo for cancellation checks
-      const result = await processVideo(inputPath, outputPath, job);
-      
-      // Check one final time if job was cancelled
-      const finalState = await job.getState();
-      if (finalState === 'removed') {
-        reject(new Error('Job cancelled before completion'));
-        return;
-      }
+      // Process the video
+      processVideo(inputPath, outputPath, job)
+        .then(resolve)
+        .catch(reject);
+    });
 
-      job.progress(100);
-      console.log(`Job ${job.id} completed successfully`);
-      resolve(result);
-    } catch (error) {
-      console.error(`Error processing video job ${job.id}:`, error);
-      reject(error);
-    } finally {
-      clearInterval(progressInterval);
-      clearTimeout(timeout);
-      
-      try {
-        await safeDelete(inputPath);
-        console.log(`Input file deleted for job ${job.id}: ${inputPath}`);
-        
-        // Clean up output file if job was cancelled
-        const jobState = await job.getState();
-        if (jobState === 'removed' && outputPath) {
-          await safeDelete(outputPath);
-          console.log(`Output file deleted for cancelled job ${job.id}: ${outputPath}`);
-        }
-      } catch (deleteError) {
-        console.error(`Error deleting files for job ${job.id}:`, deleteError);
-      }
+    // Final state check
+    const finalState = await job.getState();
+    if (finalState === 'removed' || job.data.cancelRequested) {
+      throw new Error('Job cancelled before completion');
     }
-  });
+
+    job.progress(100);
+    return { outputPath };
+  } catch (error) {
+    console.error(`Error processing video job ${job.id}:`, error);
+    throw error;
+  } finally {
+    // Clear intervals and timers
+    if (progressInterval) clearInterval(progressInterval);
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+    
+    // Clean up files
+    try {
+      const currentState = await job.getState();
+      const shouldCleanup = currentState === 'removed' || job.data.cancelRequested;
+      
+      await safeDelete(inputPath);
+      if (shouldCleanup) {
+        await safeDelete(outputPath);
+      }
+    } catch (error) {
+      console.error(`Error cleaning up files for job ${job.id}:`, error);
+    }
+  }
 });
 
 // Add these queue event handlers

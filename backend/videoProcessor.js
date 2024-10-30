@@ -571,79 +571,87 @@ async function safeDelete(filePath) {
   }
 }
 
-async function processVideo(inputPath, outputPath, job) {  // Added job parameter
+async function processVideo(inputPath, outputPath, job) {
   const tempFiles = [];
   try {
-    // Add job cancellation check
+    // Add job cancellation check with both state and data
     const checkCancellation = async () => {
       if (job) {
-        const [state, jobData] = await Promise.all([
-          job.getState(),
-          job.data
-        ]);
-        
-        if (['removed', 'failed'].includes(state) || jobData.cancelRequested) {
-          throw new Error('Job was cancelled or failed');
+        try {
+          const [state, data] = await Promise.all([
+            job.getState(),
+            job.data,
+          ]);
+          
+          if (state === 'removed' || data.cancelRequested) {
+            throw new Error('Job cancelled');
+          }
+        } catch (error) {
+          if (error.message === 'Job cancelled') {
+            throw error;
+          }
+          console.error('Error checking job state:', error);
         }
       }
     };
 
+    // Initial cancellation check
     await checkCancellation();
-    console.log(`Starting video processing for: ${inputPath}`);
     
-    await checkCancellation();
+    console.log(`Starting video processing for: ${inputPath}`);
     await fs.access(inputPath, fs.constants.R_OK);
-    console.log(`Input file verified: ${inputPath}`);
-
+    
     const tempDir = path.dirname(inputPath);
     await fs.access(tempDir, fs.constants.W_OK);
-    console.log(`Temp directory verified: ${tempDir}`);
 
     const tempFile1 = path.join(tempDir, `temp_video_1_${Date.now()}.mp4`);
     const tempFile2 = path.join(tempDir, `temp_video_2_${Date.now()}.mp4`);
     tempFiles.push(tempFile1, tempFile2);
 
+    // Store temp files in job data for cleanup
+    await job.update({ ...job.data, tempFiles });
+
+    // Add cancellation check before each operation
     await checkCancellation();
     console.log('Removing metadata...');
     await removeMetadata(inputPath, tempFile1);
-    console.log('Metadata removed successfully.');
 
     await checkCancellation();
     console.log('Modifying video...');
     await modifyVideo(tempFile1, tempFile2);
-    console.log('Video modified successfully.');
 
     await checkCancellation();
     console.log('Adjusting audio...');
     await adjustAudio(tempFile2, tempFile1);
-    console.log('Audio adjusted successfully.');
 
     await checkCancellation();
     console.log('Re-encoding video...');
     await reencodeVideo(tempFile1, tempFile2);
-    console.log('Video re-encoded successfully.');
 
     await checkCancellation();
     console.log('Changing color space...');
     await changeColorSpace(tempFile2, outputPath);
-    console.log('Color space changed successfully.');
 
     const md5Hash = await generateMD5(outputPath);
-    console.log(`MD5 Hash of processed video: ${md5Hash}`);
 
-    console.log(`Video processing completed successfully: ${outputPath}`);
     return { md5Hash, outputPath };
   } catch (error) {
     console.error('Error in processVideo:', error);
+    // Clean up output file if it exists and there was an error
+    try {
+      await fs.access(outputPath, fs.constants.F_OK);
+      await fs.unlink(outputPath);
+    } catch (cleanupError) {
+      // Ignore if file doesn't exist
+    }
     throw error;
   } finally {
     // Clean up temp files
     for (const file of tempFiles) {
       try {
         await safeDelete(file);
-        console.log(`Temporary file deleted: ${file}`);
-      } catch (deleteError) {
-        console.error(`Error deleting temporary file ${file}:`, deleteError);
+      } catch (error) {
+        console.error(`Error deleting temp file ${file}:`, error);
       }
     }
   }
