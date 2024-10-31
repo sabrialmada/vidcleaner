@@ -390,7 +390,7 @@ const fs = require('fs').promises;
 const multer = require('multer');
 const { videoQueue } = require('../queue');
 const archiver = require('archiver');
-const jobStateManager = require('./jobStateManager');
+const jobStateManager = require('../jobStateManager');
 
 
 const router = express.Router();
