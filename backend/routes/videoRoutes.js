@@ -390,6 +390,8 @@ const fs = require('fs').promises;
 const multer = require('multer');
 const { videoQueue } = require('../queue');
 const archiver = require('archiver');
+const jobStateManager = require('./jobStateManager');
+
 
 const router = express.Router();
 const uploadsDir = path.join(__dirname, '../uploads');
@@ -448,6 +450,11 @@ router.post('/cancel-jobs', async (req, res) => {
     }
 
     console.log(`Cancelling jobs: ${jobIds.join(', ')}`);
+    
+    // Mark all jobs for cancellation first
+    jobIds.forEach(jobId => {
+      jobStateManager.markJobCancelled(jobId);
+    });
     
     const results = await Promise.allSettled(jobIds.map(async (jobId) => {
       const job = await videoQueue.getJob(jobId);

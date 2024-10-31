@@ -1046,9 +1046,6 @@ try {
   process.exit(1);
 }
 
-const { videoQueue } = require('./queue');
-const { processVideo, safeDelete } = require('./videoProcessor');
-
 const app = express();
 
 // Basic middleware
@@ -1141,87 +1138,8 @@ app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/user', userRoutes);
 app.use('/admin', adminRoutes);
 
-// Video queue processing with improved error handling
-// In server.js, update the video queue processing section
-
-videoQueue.process(async (job) => {
-  const { inputPath, outputPath } = job.data;
-  
-  // Initial state check
-  const initialState = await job.getState();
-  if (initialState === 'removed' || job.data.cancelRequested) {
-    throw new Error('Job cancelled');
-  }
-
-  job.progress(0);
-  console.log(`Starting job ${job.id} for input: ${inputPath}`);
-
-  let progressInterval;
-  let timeoutTimer;
-
-  try {
-    await new Promise((resolve, reject) => {
-      // Set timeout
-      timeoutTimer = setTimeout(() => {
-        reject(new Error('Job timed out after 30 minutes'));
-      }, 30 * 60 * 1000);
-
-      // Set up progress monitoring
-      progressInterval = setInterval(async () => {
-        try {
-          // Check if job was cancelled
-          const currentState = await job.getState();
-          const jobData = await job.data;
-          
-          if (currentState === 'removed' || jobData.cancelRequested) {
-            clearInterval(progressInterval);
-            clearTimeout(timeoutTimer);
-            reject(new Error('Job cancelled during processing'));
-            return;
-          }
-          
-          job.progress(Math.min(job.progress() + 10, 90));
-        } catch (error) {
-          console.error('Error in progress interval:', error);
-        }
-      }, 5000);
-
-      // Process the video
-      processVideo(inputPath, outputPath, job)
-        .then(resolve)
-        .catch(reject);
-    });
-
-    // Final state check
-    const finalState = await job.getState();
-    if (finalState === 'removed' || job.data.cancelRequested) {
-      throw new Error('Job cancelled before completion');
-    }
-
-    job.progress(100);
-    return { outputPath };
-  } catch (error) {
-    console.error(`Error processing video job ${job.id}:`, error);
-    throw error;
-  } finally {
-    // Clear intervals and timers
-    if (progressInterval) clearInterval(progressInterval);
-    if (timeoutTimer) clearTimeout(timeoutTimer);
-    
-    // Clean up files
-    try {
-      const currentState = await job.getState();
-      const shouldCleanup = currentState === 'removed' || job.data.cancelRequested;
-      
-      await safeDelete(inputPath);
-      if (shouldCleanup) {
-        await safeDelete(outputPath);
-      }
-    } catch (error) {
-      console.error(`Error cleaning up files for job ${job.id}:`, error);
-    }
-  }
-});
+const { videoQueue } = require('./queue');
+const { safeDelete } = require('./videoProcessor');
 
 // Add these queue event handlers
 videoQueue.on('removed', async (job) => {
@@ -1237,12 +1155,12 @@ videoQueue.on('removed', async (job) => {
   }
 });
 
-videoQueue.on('completed', async (job, result) => {
+videoQueue.on('completed', (job, result) => {
   console.log(`Job ${job.id} completed with result:`, result);
 });
 
-videoQueue.on('failed', async (job, err) => {
-  console.error(`Job ${job.id} failed with error:`, err);
+videoQueue.on('failed', async (job, error) => {
+  console.error(`Job ${job.id} failed with error:`, error);
   try {
     const { inputPath } = job.data;
     const { outputPath } = job.returnvalue || {};

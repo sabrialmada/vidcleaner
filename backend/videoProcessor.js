@@ -486,10 +486,20 @@ const crypto = require('crypto');
 const fs = require('fs').promises;
 const path = require('path');
 
-function ffmpegPromise(inputPath, outputPath, operation) {
+function ffmpegPromise(inputPath, outputPath, operation, job) {
   return new Promise((resolve, reject) => {
     const command = ffmpeg(inputPath);
     operation(command);
+
+    let isCancelled = false;
+    const checkCancellation = setInterval(async () => {
+      if (job && jobStateManager.isJobCancelled(job.id)) {
+        isCancelled = true;
+        command.kill('SIGKILL');
+        clearInterval(checkCancellation);
+      }
+    }, 1000);
+
     command
       .outputOptions('-preset', 'ultrafast')
       .save(outputPath)
@@ -497,19 +507,28 @@ function ffmpegPromise(inputPath, outputPath, operation) {
         console.log(`FFmpeg command: ${commandLine}`);
       })
       .on('progress', progress => {
+        if (isCancelled) return;
         const percent = progress.percent ? progress.percent.toFixed(2) : 'N/A';
         const timemark = progress.timemark || 'N/A';
         console.log(`Processing: ${percent}% done (Time: ${timemark})`);
       })
       .on('end', () => {
-        console.log(`FFmpeg operation completed: ${outputPath}`);
-        resolve();
+        clearInterval(checkCancellation);
+        if (isCancelled) {
+          reject(new Error('Job cancelled'));
+        } else {
+          console.log(`FFmpeg operation completed: ${outputPath}`);
+          resolve();
+        }
       })
       .on('error', (err, stdout, stderr) => {
-        console.error('FFmpeg error:', err.message);
-        console.error('FFmpeg stdout:', stdout);
-        console.error('FFmpeg stderr:', stderr);
-        reject(err);
+        clearInterval(checkCancellation);
+        if (!isCancelled) {
+          console.error('FFmpeg error:', err.message);
+          console.error('FFmpeg stdout:', stdout);
+          console.error('FFmpeg stderr:', stderr);
+        }
+        reject(isCancelled ? new Error('Job cancelled') : err);
       });
   });
 }

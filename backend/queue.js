@@ -1,5 +1,6 @@
 const Queue = require('bull');
 const fs = require('fs').promises;
+const jobStateManager = require('./jobStateManager');
 
 if (!process.env.REDIS_URL) {
   console.error('REDIS_URL is not defined');
@@ -23,7 +24,6 @@ const parseRedisUrl = (url) => {
 
 const redisConfig = parseRedisUrl(process.env.REDIS_URL);
 
-// Simplified Redis client config - removed problematic options
 const redisClientConfig = {
   port: redisConfig.port,
   host: redisConfig.host,
@@ -35,37 +35,6 @@ const redisClientConfig = {
     return delay;
   },
   connectTimeout: 30000
-};
-
-// Enhanced job cleanup handler
-const handleJobCleanup = async (job) => {
-  console.log(`Cleaning up job ${job.id}...`);
-  try {
-    const inputPath = job.data.inputPath;
-    const outputPath = job.returnvalue?.outputPath;
-    const tempFiles = job.data.tempFiles || [];
-
-    // Clean up all associated files
-    const filesToDelete = [
-      inputPath,
-      outputPath,
-      ...tempFiles
-    ].filter(Boolean);
-
-    await Promise.all(filesToDelete.map(async (filePath) => {
-      try {
-        await fs.access(filePath);
-        await fs.unlink(filePath);
-        console.log(`Deleted file: ${filePath}`);
-      } catch (error) {
-        if (error.code !== 'ENOENT') {
-          console.error(`Error deleting file ${filePath}:`, error);
-        }
-      }
-    }));
-  } catch (error) {
-    console.error(`Error during job cleanup for job ${job.id}:`, error);
-  }
 };
 
 const queueOptions = {
@@ -105,6 +74,65 @@ console.log('Initializing queue with Redis config:', {
 
 const videoQueue = new Queue('video-processing', process.env.REDIS_URL, queueOptions);
 
+// Job processing
+videoQueue.process(async (job) => {
+  const { inputPath, outputPath } = job.data;
+  
+  try {
+    jobStateManager.markJobActive(job.id);
+    
+    if (jobStateManager.isJobCancelled(job.id)) {
+      throw new Error('Job cancelled before start');
+    }
+
+    job.progress(0);
+    console.log(`Starting job ${job.id} for input: ${inputPath}`);
+
+    let progressInterval;
+    let timeoutTimer;
+
+    try {
+      await new Promise((resolve, reject) => {
+        timeoutTimer = setTimeout(() => {
+          jobStateManager.markJobCancelled(job.id);
+          reject(new Error('Job timed out after 30 minutes'));
+        }, 30 * 60 * 1000);
+
+        progressInterval = setInterval(async () => {
+          if (jobStateManager.isJobCancelled(job.id)) {
+            clearInterval(progressInterval);
+            clearTimeout(timeoutTimer);
+            reject(new Error('Job cancelled during processing'));
+            return;
+          }
+          const currentProgress = job.progress() || 0;
+          job.progress(Math.min(currentProgress + 5, 90));
+        }, 2000);
+
+        processVideo(inputPath, outputPath, job)
+          .then(resolve)
+          .catch(reject);
+      });
+
+      if (jobStateManager.isJobCancelled(job.id)) {
+        throw new Error('Job cancelled before completion');
+      }
+
+      job.progress(100);
+      return { outputPath };
+    } finally {
+      if (progressInterval) clearInterval(progressInterval);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+    }
+  } catch (error) {
+    console.error(`Error processing job ${job.id}:`, error);
+    throw error;
+  } finally {
+    jobStateManager.removeJob(job.id);
+  }
+});
+
+// Event handlers
 videoQueue.on('error', (error) => {
   console.error('Queue Error:', error);
 });
@@ -112,15 +140,13 @@ videoQueue.on('error', (error) => {
 videoQueue.on('failed', async (job, error) => {
   console.error(`Job ${job.id} failed with error:`, error);
   console.error('Job data:', job.data);
-  
-  if (job.attemptsMade >= job.opts.attempts) {
-    console.error(`Job ${job.id} has failed all ${job.opts.attempts} attempts`);
-    await handleJobCleanup(job);
-  }
+  jobStateManager.markJobCancelled(job.id);
+  await handleJobCleanup(job);
 });
 
 videoQueue.on('removed', async (job) => {
   console.log(`Job ${job.id} was removed`);
+  jobStateManager.markJobCancelled(job.id);
   await handleJobCleanup(job);
 });
 
@@ -129,10 +155,12 @@ videoQueue.on('completed', async (job, result) => {
   if (job.data.cleanupOnComplete) {
     await handleJobCleanup(job);
   }
+  jobStateManager.removeJob(job.id);
 });
 
 videoQueue.on('stalled', async (job) => {
   console.warn(`Job ${job.id} has stalled`);
+  jobStateManager.markJobCancelled(job.id);
   await handleJobCleanup(job);
   await job.remove();
 });
@@ -143,44 +171,7 @@ videoQueue.on('waiting', (jobId) => {
 
 videoQueue.on('active', (job) => {
   console.log(`Job ${job.id} has started processing`);
-});
-
-// Enhanced cleanup function
-async function cleanupStalledJobs() {
-  try {
-    const jobTypes = ['failed', 'stalled', 'delayed', 'active'];
-    const jobs = await Promise.all(jobTypes.map(type => videoQueue.getJobs([type])));
-    const allJobs = jobs.flat();
-    
-    console.log(`Found ${allJobs.length} jobs to check for cleanup`);
-    
-    const now = Date.now();
-    await Promise.all(allJobs.map(async (job) => {
-      try {
-        const state = await job.getState();
-        const jobAge = now - job.timestamp;
-        
-        if (jobAge > 3600000 || ['failed', 'stalled'].includes(state)) {
-          console.log(`Cleaning up ${state} job ${job.id} (age: ${jobAge}ms)`);
-          await handleJobCleanup(job);
-          await job.remove();
-        }
-      } catch (error) {
-        console.error(`Error processing job ${job.id}:`, error);
-      }
-    }));
-  } catch (error) {
-    console.error('Error in cleanup process:', error);
-  }
-}
-
-// Run cleanup every hour
-const CLEANUP_INTERVAL = 3600000;
-setInterval(cleanupStalledJobs, CLEANUP_INTERVAL);
-
-// Initial cleanup
-cleanupStalledJobs().catch(error => {
-  console.error('Initial cleanup failed:', error);
+  jobStateManager.markJobActive(job.id);
 });
 
 process.on('SIGTERM', async () => {
