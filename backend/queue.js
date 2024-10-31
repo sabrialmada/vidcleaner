@@ -1,12 +1,14 @@
 const Queue = require('bull');
 const fs = require('fs').promises;
 const jobStateManager = require('./jobStateManager');
+const { processVideo, safeDelete } = require('./videoProcessor');
 
 if (!process.env.REDIS_URL) {
   console.error('REDIS_URL is not defined');
   process.exit(1);
 }
 
+// Redis configuration helpers
 const parseRedisUrl = (url) => {
   try {
     const parsedUrl = new URL(url);
@@ -35,6 +37,36 @@ const redisClientConfig = {
     return delay;
   },
   connectTimeout: 30000
+};
+
+// File cleanup helper
+const handleJobCleanup = async (job) => {
+  console.log(`Cleaning up job ${job.id}...`);
+  try {
+    const inputPath = job.data.inputPath;
+    const outputPath = job.returnvalue?.outputPath;
+    const tempFiles = job.data.tempFiles || [];
+
+    // Clean up all associated files
+    const filesToDelete = [
+      inputPath,
+      outputPath,
+      ...tempFiles
+    ].filter(Boolean);
+
+    await Promise.all(filesToDelete.map(async (filePath) => {
+      try {
+        await safeDelete(filePath);
+        console.log(`Deleted file: ${filePath}`);
+      } catch (error) {
+        if (error.code !== 'ENOENT') {
+          console.error(`Error deleting file ${filePath}:`, error);
+        }
+      }
+    }));
+  } catch (error) {
+    console.error(`Error during job cleanup for job ${job.id}:`, error);
+  }
 };
 
 const queueOptions = {
@@ -77,6 +109,8 @@ const videoQueue = new Queue('video-processing', process.env.REDIS_URL, queueOpt
 // Job processing
 videoQueue.process(async (job) => {
   const { inputPath, outputPath } = job.data;
+  let progressInterval;
+  let timeoutTimer;
   
   try {
     jobStateManager.markJobActive(job.id);
@@ -88,17 +122,14 @@ videoQueue.process(async (job) => {
     job.progress(0);
     console.log(`Starting job ${job.id} for input: ${inputPath}`);
 
-    let progressInterval;
-    let timeoutTimer;
+    const result = await new Promise((resolve, reject) => {
+      timeoutTimer = setTimeout(() => {
+        jobStateManager.markJobCancelled(job.id);
+        reject(new Error('Job timed out after 30 minutes'));
+      }, 30 * 60 * 1000);
 
-    try {
-      await new Promise((resolve, reject) => {
-        timeoutTimer = setTimeout(() => {
-          jobStateManager.markJobCancelled(job.id);
-          reject(new Error('Job timed out after 30 minutes'));
-        }, 30 * 60 * 1000);
-
-        progressInterval = setInterval(async () => {
+      progressInterval = setInterval(async () => {
+        try {
           if (jobStateManager.isJobCancelled(job.id)) {
             clearInterval(progressInterval);
             clearTimeout(timeoutTimer);
@@ -107,27 +138,35 @@ videoQueue.process(async (job) => {
           }
           const currentProgress = job.progress() || 0;
           job.progress(Math.min(currentProgress + 5, 90));
-        }, 2000);
+        } catch (error) {
+          console.error('Error updating progress:', error);
+        }
+      }, 2000);
 
-        processVideo(inputPath, outputPath, job)
-          .then(resolve)
-          .catch(reject);
-      });
+      processVideo(inputPath, outputPath, job)
+        .then(resolve)
+        .catch(reject)
+        .finally(() => {
+          clearInterval(progressInterval);
+          clearTimeout(timeoutTimer);
+        });
+    });
 
-      if (jobStateManager.isJobCancelled(job.id)) {
-        throw new Error('Job cancelled before completion');
-      }
-
-      job.progress(100);
-      return { outputPath };
-    } finally {
-      if (progressInterval) clearInterval(progressInterval);
-      if (timeoutTimer) clearTimeout(timeoutTimer);
+    if (jobStateManager.isJobCancelled(job.id)) {
+      throw new Error('Job cancelled before completion');
     }
+
+    job.progress(100);
+    return { outputPath };
   } catch (error) {
     console.error(`Error processing job ${job.id}:`, error);
+    await handleJobCleanup(job).catch(cleanupError => 
+      console.error(`Cleanup error for job ${job.id}:`, cleanupError)
+    );
     throw error;
   } finally {
+    if (progressInterval) clearInterval(progressInterval);
+    if (timeoutTimer) clearTimeout(timeoutTimer);
     jobStateManager.removeJob(job.id);
   }
 });
@@ -140,29 +179,38 @@ videoQueue.on('error', (error) => {
 videoQueue.on('failed', async (job, error) => {
   console.error(`Job ${job.id} failed with error:`, error);
   console.error('Job data:', job.data);
-  jobStateManager.markJobCancelled(job.id);
-  await handleJobCleanup(job);
+  try {
+    jobStateManager.markJobCancelled(job.id);
+    await handleJobCleanup(job);
+  } catch (cleanupError) {
+    console.error(`Failed to clean up job ${job.id}:`, cleanupError);
+  }
 });
 
 videoQueue.on('removed', async (job) => {
   console.log(`Job ${job.id} was removed`);
-  jobStateManager.markJobCancelled(job.id);
-  await handleJobCleanup(job);
+  try {
+    jobStateManager.markJobCancelled(job.id);
+    await handleJobCleanup(job);
+  } catch (cleanupError) {
+    console.error(`Failed to clean up removed job ${job.id}:`, cleanupError);
+  }
 });
 
 videoQueue.on('completed', async (job, result) => {
   console.log(`Job ${job.id} completed with result:`, result);
-  if (job.data.cleanupOnComplete) {
-    await handleJobCleanup(job);
-  }
   jobStateManager.removeJob(job.id);
 });
 
 videoQueue.on('stalled', async (job) => {
   console.warn(`Job ${job.id} has stalled`);
-  jobStateManager.markJobCancelled(job.id);
-  await handleJobCleanup(job);
-  await job.remove();
+  try {
+    jobStateManager.markJobCancelled(job.id);
+    await handleJobCleanup(job);
+    await job.remove();
+  } catch (error) {
+    console.error(`Error handling stalled job ${job.id}:`, error);
+  }
 });
 
 videoQueue.on('waiting', (jobId) => {
@@ -174,8 +222,22 @@ videoQueue.on('active', (job) => {
   jobStateManager.markJobActive(job.id);
 });
 
+// Graceful shutdown
 process.on('SIGTERM', async () => {
   try {
+    const activeJobs = await videoQueue.getActive();
+    console.log(`Cleaning up ${activeJobs.length} active jobs...`);
+    
+    await Promise.all(activeJobs.map(async (job) => {
+      try {
+        jobStateManager.markJobCancelled(job.id);
+        await handleJobCleanup(job);
+        await job.remove();
+      } catch (error) {
+        console.error(`Error cleaning up job ${job.id} during shutdown:`, error);
+      }
+    }));
+
     await videoQueue.close();
     console.log('Queue shut down gracefully');
   } catch (error) {
