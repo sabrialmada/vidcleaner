@@ -759,7 +759,7 @@ const VideoCleaner = () => {
 
 export default VideoCleaner; */
 
-import React, { useState, useEffect, useCallback } from 'react';
+/* import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import './VideoCleaner.css';
@@ -997,6 +997,310 @@ const VideoCleaner = () => {
           Our platform only accepts video files. Please do not upload ZIP files, directories, or any other types of files.
           <br />
           Supported Formats: MP4, AVI, MOV
+          <br />
+          Multiple File Selection: You can select and upload multiple video files at once.
+        </p>
+      </div>
+    </div>
+  );
+};
+
+export default VideoCleaner; */
+
+
+import React, { useState, useEffect, useCallback } from 'react';
+import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
+import './VideoCleaner.css';
+import { API_BASE_URL } from '../../config';
+
+const VideoCleaner = () => {
+  const [fileNames, setFileNames] = useState([]);
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [progress, setProgress] = useState({});
+  const [activeJobIds, setActiveJobIds] = useState([]);
+  const [retryCount, setRetryCount] = useState(0);
+  const navigate = useNavigate();
+
+  // Cleanup function with improved error handling
+  const cleanup = useCallback(async () => {
+    if (activeJobIds.length > 0) {
+      try {
+        await axios.post(
+          `${API_BASE_URL}/api/cancel-jobs`,
+          { jobIds: activeJobIds },
+          {
+            headers: { 
+              'Authorization': `Bearer ${localStorage.getItem('token')}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 10000
+          }
+        );
+        console.log('Jobs cancelled successfully');
+      } catch (error) {
+        console.error('Error canceling jobs:', error);
+        // Don't show alert to user since process continues in background
+      }
+    }
+  }, [activeJobIds]);
+
+  // Handle component unmount with improved cleanup
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (isProcessing) {
+        e.preventDefault();
+        e.returnValue = 'Changes you made may not be saved.';
+        cleanup();
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      if (isProcessing) {
+        cleanup();
+      }
+    };
+  }, [isProcessing, cleanup]);
+
+  // Improved job status checking with exponential backoff
+  const checkJobStatus = useCallback(async (jobIds) => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/job-status`, {
+        params: { jobIds: jobIds.join(',') },
+        headers: { 
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      });
+
+      const { statuses, allCompleted } = response.data;
+      
+      // Reset retry count on successful request
+      setRetryCount(0);
+      
+      const newProgress = {};
+      statuses.forEach(({ jobId, status, progress, originalName }) => {
+        newProgress[jobId] = {
+          status,
+          progress: progress || 0,
+          originalName
+        };
+      });
+      setProgress(newProgress);
+
+      if (allCompleted) {
+        await downloadProcessedVideos(jobIds);
+        setIsProcessing(false);
+        setActiveJobIds([]);
+      } else {
+        // Exponential backoff with maximum delay
+        const baseDelay = 2000;
+        const maxDelay = 10000;
+        const delay = Math.min(baseDelay * Math.pow(1.5, retryCount), maxDelay);
+        setTimeout(() => checkJobStatus(jobIds), delay);
+      }
+    } catch (error) {
+      console.error('Error checking job status:', error);
+      
+      if (error.response?.status === 429) {
+        // Rate limit hit - wait longer
+        setTimeout(() => checkJobStatus(jobIds), 5000);
+        return;
+      }
+
+      if (error.response?.status === 401) {
+        navigate('/login');
+        return;
+      }
+
+      setRetryCount(prev => prev + 1);
+      if (retryCount <= 3) {
+        const retryDelay = 3000 * Math.pow(2, retryCount);
+        setTimeout(() => checkJobStatus(jobIds), retryDelay);
+      } else {
+        setIsProcessing(false);
+        alert('Lost connection to the server. The process continues in the background.');
+      }
+    }
+  }, [retryCount, navigate]);
+
+  const downloadProcessedVideos = async (jobIds) => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/download-processed`, {
+        params: { jobIds: jobIds.join(',') },
+        responseType: 'blob',
+        headers: { 
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000 // Longer timeout for downloads
+      });
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'processed_videos.zip');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error downloading processed videos:', error);
+      if (error.response?.status === 401) {
+        navigate('/login');
+      } else {
+        alert('Error downloading videos. Please try again.');
+      }
+    }
+  };
+
+  const handleFileChange = (event) => {
+    const files = event.target.files;
+    if (files.length > 10) {
+      alert("Maximum 10 files allowed at once");
+      return;
+    }
+    setSelectedFiles(files);
+    setFileNames(Array.from(files).map(file => file.name));
+  };
+
+  const checkSubscription = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        navigate('/login');
+        return false;
+      }
+  
+      const response = await axios.get(`${API_BASE_URL}/api/subscriptions/status`, { 
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      return response.data.isSubscribed;
+    } catch (error) {
+      console.error('Error checking subscription:', error);
+      if (error.response?.status === 401 || error.response?.status === 403) {
+        navigate('/login');
+      }
+      return false;
+    }
+  };
+
+  const handleClean = async () => {
+    if (selectedFiles.length === 0) {
+      alert("Please upload video files.");
+      return;
+    }
+
+    if (selectedFiles.length > 10) {
+      alert("Maximum 10 files allowed at once");
+      return;
+    }
+
+    const isSubscribed = await checkSubscription();
+    if (!isSubscribed) {
+      navigate('/subscription');
+      return;
+    }
+
+    setIsProcessing(true);
+    const formData = new FormData();
+    for (let i = 0; i < selectedFiles.length; i++) {
+      formData.append('videos', selectedFiles[i]);
+    }
+
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.post(`${API_BASE_URL}/api/process-videos`, formData, {
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data'
+        },
+        timeout: 60000 // 1 minute timeout for uploads
+      });
+
+      const jobIds = response.data.jobs.map(job => job.jobId);
+      setActiveJobIds(jobIds);
+      setRetryCount(0); // Reset retry count
+      checkJobStatus(jobIds);
+    } catch (error) {
+      console.error('Error processing videos:', error);
+      setIsProcessing(false);
+      if (error.response?.status === 401) {
+        navigate('/login');
+      } else {
+        alert('Failed to process videos. Please try again later.');
+      }
+    }
+  };
+
+  return (
+    <div className="video-cleaner-container">
+      <h2>Video Cleaner</h2>
+
+      <div className="file-upload">
+        <label htmlFor="fileUpload" className="upload-btn">
+          Upload Files
+        </label>
+        <input 
+          type="file" 
+          id="fileUpload" 
+          accept="video/*" 
+          onChange={handleFileChange} 
+          className="file-input" 
+          multiple
+          disabled={isProcessing}
+        />
+        <input 
+          type="text" 
+          value={fileNames.join(', ')} 
+          placeholder="No files selected" 
+          readOnly 
+          className="file-name-display" 
+        />
+        <button 
+          onClick={handleClean} 
+          className="clean-btn" 
+          disabled={isProcessing}
+        >
+          {isProcessing ? 'Processing...' : 'Clean'}
+        </button>
+      </div>
+
+      {isProcessing && (
+        <div className="progress-container">
+          {Object.entries(progress).map(([jobId, { status, progress, originalName }]) => (
+            <div key={jobId} className="progress-item">
+              <div className="progress-label">{originalName || `Video ${jobId}`}</div>
+              <div className="progress-bar">
+                <div 
+                  className="progress-fill" 
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              <div className="progress-text">
+                {`${status.charAt(0).toUpperCase() + status.slice(1)} - ${Math.round(progress)}%`}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="info-box">
+        <p>
+          Our platform only accepts video files. Please do not upload ZIP files, directories, or any other types of files.
+          <br />
+          Supported Formats: MP4, AVI, MOV
+          <br />
+          Maximum Files: 10 files at once
           <br />
           Multiple File Selection: You can select and upload multiple video files at once.
         </p>

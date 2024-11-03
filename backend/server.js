@@ -1048,39 +1048,60 @@ try {
 
 const app = express();
 
-// Basic middleware
-app.use(helmet());
-app.use(compression());
-app.use(morgan('combined'));
-
 // Create uploads directory
 const uploadsDir = path.join(__dirname, 'uploads');
 fs.mkdir(uploadsDir, { recursive: true })
   .then(() => console.log('Uploads directory created:', uploadsDir))
   .catch(err => console.error('Error creating uploads directory:', err));
 
-// Rate limiting configuration with Redis
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: 'Too many requests from this IP, please try again later.',
-  skip: (req) => process.env.NODE_ENV === 'development'
-});
-app.use(limiter);
+// Security middleware first
+app.use(helmet());
 
-// CORS configuration
+// CORS configuration - immediately after security
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production'
-    ? ['https://vidcleaner.vercel.app', 'https://www.vidcleaner.com']
+    ? ['https://vidcleaner.vercel.app', 'https://www.vidcleaner.com', 'https://vidcleaner.com']
     : ['http://localhost:3000'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['Content-Disposition'],
   credentials: true,
-  optionsSuccessStatus: 204
+  preflightContinue: false,
+  optionsSuccessStatus: 204,
+  maxAge: 86400 // 24 hours
 };
+
 app.use(cors(corsOptions));
+
+// Other basic middleware
+app.use(compression());
+app.use(morgan('combined'));
+
+// CORS debug middleware
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  console.log('Origin:', req.headers.origin);
+  console.log('Headers:', JSON.stringify(req.headers));
+  next();
+});
+
+// Rate limiting configuration with Redis
+const limiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute window
+  max: (req) => {
+    if (req.path.includes('/api/job-status')) {
+      return 300; // Higher limit for job status checks
+    }
+    return 100; // Default limit for other routes
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipFailedRequests: true,
+  message: 'Too many requests from this IP, please try again later.',
+  skip: (req) => process.env.NODE_ENV === 'development'
+});
+
+app.use(limiter);
 
 // Body parser setup
 app.use('/api/subscriptions/webhook', express.raw({type: 'application/json'}));
@@ -1130,6 +1151,12 @@ app.use((req, res, next) => {
   next();
 });
 
+// Add test endpoint for CORS
+app.options('/api/test-cors', cors(corsOptions));
+app.get('/api/test-cors', (req, res) => {
+  res.json({ message: 'CORS is working' });
+});
+
 // Route handlers
 app.use('/api', videoRoutes);
 app.use('/api', reelRoutes);
@@ -1141,7 +1168,7 @@ app.use('/admin', adminRoutes);
 const { videoQueue } = require('./queue');
 const { safeDelete } = require('./videoProcessor');
 
-// Add these queue event handlers
+// Queue event handlers
 videoQueue.on('removed', async (job) => {
   console.log(`Job ${job.id} was removed, cleaning up...`);
   try {
