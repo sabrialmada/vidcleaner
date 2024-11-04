@@ -176,7 +176,7 @@ const Register = ({ setUserEmail }) => {
   
       console.log('Token stored in localStorage:', accessToken);
       console.log('Redirecting to dashboard');
-      navigate('/dashboard');
+      navigate('/dashboard/cleaner/video');
     } catch (err) {
       console.error('Registration error:', err.response?.data || err.message);
       setError(err.response?.data?.message || "Registration failed. Please try again.");
