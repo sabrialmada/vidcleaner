@@ -157,10 +157,23 @@ const Header = ({ userEmail, onLogout }) => {
     navigate('/user-profile');
   };
 
+  // New function to handle logo click
+  const handleLogoClick = () => {
+    if (userEmail) {
+      navigate('/dashboard/cleaner/video');
+    } else {
+      navigate('/');
+    }
+  };
+
   return (
     <header>
       <nav>
-        <div className="logo-container">
+        <div 
+          className="logo-container" 
+          onClick={handleLogoClick}
+          style={{ cursor: 'pointer' }} // Add pointer cursor to indicate clickable
+        >
           <img src={logo} alt="VidCleaner Logo" className="logo-image" />
           <div className="logo-text">VidCleaner</div>
         </div>
