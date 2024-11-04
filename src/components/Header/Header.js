@@ -180,7 +180,7 @@ const Header = ({ userEmail, onLogout }) => {
         <div className="nav-links">
           {userEmail ? (
             <>
-              <button className="user-profile-btn" onClick={handleUserProfile}>{userEmail}</button>
+              <button className="user-profile-btn"  style={{ cursor: 'pointer' }} onClick={handleUserProfile}>{userEmail}</button>
               <button className="logout-btn" onClick={onLogout}>Logout</button>
             </>
           ) : (
