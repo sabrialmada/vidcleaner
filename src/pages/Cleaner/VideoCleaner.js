@@ -1246,8 +1246,8 @@ const VideoCleaner = () => {
     <div className="video-cleaner-container">
       <h2>Video Cleaner</h2>
 
-      <div className="file-upload">
-        <label htmlFor="fileUpload" className="upload-btn">
+      <div className="file-upload"> 
+        <label htmlFor="fileUpload" style={{ cursor: 'pointer' }} className="upload-btn"> 
           Upload Files
         </label>
         <input 
