@@ -114,7 +114,7 @@ const Login = ({ setUserEmail }) => {
   
       console.log('Token stored in localStorage:', accessToken);
       console.log('Redirecting to dashboard');
-      navigate('/dashboard');
+      navigate('/dashboard/cleaner/video');
     } catch (err) {
       console.error('Login error:', err.response?.data || err.message);
       setError(err.response?.data?.message || 'Login failed. Please try again.');
