@@ -1,7 +1,7 @@
 
 /* General styles */
 
-* {
+/* * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
@@ -9,7 +9,6 @@
 }
 
 body {
-  /* color: rgb(9, 9, 11); */
   background-color: #f4f4f4;
 }
 
@@ -17,7 +16,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 100px 20px;
+  padding: 200px 20px;
   max-width: 1200px;
   margin: 0 auto;
 }
@@ -57,3 +56,101 @@ body {
   cursor: pointer;
 }
 
+ */
+
+ /* General styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+body {
+  background-color: #f4f4f4;
+}
+
+/* Home Container */
+.home-container {
+  width: 100%;
+}
+
+/* Hero Section */
+.hero-section {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 200px 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+  gap: 40px;
+}
+
+.hero-text {
+  max-width: 600px;
+}
+
+.hero-text h1 {
+  font-size: 48px;
+  line-height: 1.2;
+  color: #333;
+}
+
+.highlight {
+  color: #ff5fa2;
+}
+
+.brand-name {
+  color: #44ACE9;
+}
+
+.hero-text p {
+  font-size: 20px;
+  color: #666;
+  margin-top: 20px;
+}
+
+.get-started-btn {
+  background-color: #44ACE9;
+  color: #fff;
+  border: none;
+  padding: 15px 30px;
+  font-size: 18px;
+  border-radius: 5px;
+  margin-top: 30px;
+  cursor: pointer;
+}
+
+/* Stats Section */
+.stats-section {
+  width: 100%;
+  padding: 80px 0;
+  background: #fff;
+}
+
+.stats-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 40px 20px;
+  background: #f8f9fa;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 60px;
+}
+
+@media (max-width: 968px) {
+  .hero-section {
+    flex-direction: column;
+    padding: 100px 20px;
+  }
+  
+  .hero-text {
+    text-align: center;
+  }
+
+  .stats-container {
+    flex-direction: column;
+    text-align: center;
+  }
+}
