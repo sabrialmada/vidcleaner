@@ -877,14 +877,21 @@ router.get('/download-processed', async (req, res) => {
     res.attachment('processed_videos.zip');
     archive.pipe(res);
 
-    // Add processed videos to zip
+    // Add processed videos to zip with proper naming
     for (const job of validJobs) {
       const outputPath = job.returnvalue?.outputPath;
       const originalName = job.data.originalName;
+      const copyNumber = job.data.copyNumber || 1;
+
       if (outputPath) {
         try {
           await fs.access(outputPath);
-          archive.file(outputPath, { name: `processed_${originalName}` });
+          // Include copy number in the filename
+          const fileExtension = path.extname(originalName);
+          const fileName = path.basename(originalName, fileExtension);
+          const processedName = `processed_${fileName}_copy${copyNumber}${fileExtension}`;
+          
+          archive.file(outputPath, { name: processedName });
         } catch (error) {
           console.error(`File not found: ${outputPath}`);
         }
