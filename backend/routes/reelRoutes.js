@@ -1282,15 +1282,10 @@ const fsPromises = require('fs').promises;
 const router = express.Router();
 const uploadsDir = path.join(__dirname, '../uploads');
 
-// Enhanced URL validation with better regex
+// Enhanced URL validation
 const isValidInstagramUrl = (url) => {
     const regex = /^(?:https?:\/\/)?(?:www\.)?(?:instagram\.com\/(?:reel|p)\/[A-Za-z0-9_-]+\/?(?:\?.*)?|instagram\.com\/.*?\/(?:reel|p)\/[A-Za-z0-9_-]+\/?(?:\?.*)?)$/;
     return regex.test(url);
-};
-
-// Improved error handling wrapper
-const asyncHandler = (fn) => (req, res, next) => {
-    Promise.resolve(fn(req, res, next)).catch(next);
 };
 
 async function downloadInstagramReel(req, res) {
@@ -1310,16 +1305,40 @@ async function downloadInstagramReel(req, res) {
         return res.status(400).json({ message: 'Invalid Instagram reel URL.' });
     }
 
-    // Generate unique IDs for files
     const uniqueId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
     const tempOutputPath = path.join(uploadsDir, `temp_reel_${uniqueId}.mp4`);
     let finalOutputPath = path.join(uploadsDir, `instagram_reel_${uniqueId}.mp4`);
 
     try {
-        // Enhanced yt-dlp command with more options and better error handling
+        // Modified yt-dlp command without browser cookies dependency
         console.log('Downloading reel using yt-dlp');
-        const ytdlpCommand = `yt-dlp -o "${tempOutputPath}" "${reelUrl}" --no-check-certificate --no-warnings --ignore-errors --no-playlist --format "best[ext=mp4]" --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" --add-header "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8" --add-header "Accept-Language:en-US,en;q=0.5" --add-header "DNT:1" --cookies-from-browser chrome`;
-        
+        const ytdlpCommand = [
+            'yt-dlp',
+            '-o', `"${tempOutputPath}"`,
+            `"${reelUrl}"`,
+            '--no-check-certificate',
+            '--no-warnings',
+            '--ignore-errors',
+            '--no-playlist',
+            '--format', 'best[ext=mp4]',
+            '--user-agent', '"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"',
+            '--add-header', '"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8"',
+            '--add-header', '"Accept-Language: en-US,en;q=0.9"',
+            '--add-header', '"sec-ch-ua: Google Chrome;v=119"',
+            '--add-header', '"sec-ch-ua-mobile: ?0"',
+            '--add-header', '"sec-ch-ua-platform: Windows"',
+            '--add-header', '"Upgrade-Insecure-Requests: 1"',
+            '--add-header', '"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"',
+            '--add-header', '"Accept-Encoding: gzip, deflate, br"',
+            '--add-header', '"Sec-Fetch-Site: none"',
+            '--add-header', '"Sec-Fetch-Mode: navigate"',
+            '--add-header', '"Sec-Fetch-User: ?1"',
+            '--add-header', '"Sec-Fetch-Dest: document"',
+            '--no-abort-on-error',
+            '--no-mark-watched',
+            '--extractor-args', '"instagram:headers=\'{"X-IG-App-ID": "936619743392459"}\'"'
+        ].join(' ');
+
         const { stdout, stderr } = await execPromise(ytdlpCommand);
         console.log('yt-dlp output:', stdout);
         if (stderr) console.error('yt-dlp stderr:', stderr);
@@ -1334,18 +1353,18 @@ async function downloadInstagramReel(req, res) {
 
         console.log('Download completed');
 
-        // Improved FFmpeg encoding settings
+        // Improved FFmpeg encoding
         console.log('Re-encoding video for compatibility');
         await new Promise((resolve, reject) => {
             execFile(ffmpegPath, [
                 '-i', tempOutputPath,
                 '-c:v', 'libx264',
                 '-preset', 'medium',
-                '-crf', '18', // Better quality setting
+                '-crf', '23',
                 '-c:a', 'aac',
-                '-b:a', '192k', // Better audio quality
-                '-movflags', '+faststart', // Enable streaming
-                '-pix_fmt', 'yuv420p', // Better compatibility
+                '-b:a', '128k',
+                '-movflags', '+faststart',
+                '-pix_fmt', 'yuv420p',
                 finalOutputPath
             ], (error, stdout, stderr) => {
                 if (error) {
@@ -1368,16 +1387,16 @@ async function downloadInstagramReel(req, res) {
             finalOutputPath = cleanedFilePath;
         }
 
-        // Improved download handling with proper headers
+        // Improved download handling
         console.log('Sending processed video to client');
         res.setHeader('Content-Type', 'video/mp4');
         res.setHeader('Content-Disposition', 'attachment; filename="instagram_reel.mp4"');
         res.setHeader('Cache-Control', 'no-cache');
         
-        const readStream = fs.createReadStream(finalOutputPath);
-        readStream.pipe(res);
+        const fileStream = fs.createReadStream(finalOutputPath);
+        fileStream.pipe(res);
 
-        readStream.on('end', async () => {
+        fileStream.on('end', async () => {
             console.log('File stream completed');
             try {
                 await fsPromises.unlink(tempOutputPath);
@@ -1388,7 +1407,7 @@ async function downloadInstagramReel(req, res) {
             }
         });
 
-        readStream.on('error', (error) => {
+        fileStream.on('error', (error) => {
             console.error('Error streaming file:', error);
             if (!res.headersSent) {
                 res.status(500).json({ message: 'Error streaming video file.' });
@@ -1399,7 +1418,7 @@ async function downloadInstagramReel(req, res) {
         console.error(`Error processing the reel: ${error.message}`);
         console.error(`Error details:`, error);
         
-        // Clean up any leftover files
+        // Cleanup
         try {
             await fsPromises.unlink(tempOutputPath).catch(() => {});
             await fsPromises.unlink(finalOutputPath).catch(() => {});
@@ -1421,7 +1440,7 @@ async function downloadInstagramReel(req, res) {
     }
 }
 
-router.post('/download-reel', asyncHandler(async (req, res) => {
+router.post('/download-reel', async (req, res) => {
     const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error('Operation timed out')), 300000) // 5 minutes
     );
@@ -1442,6 +1461,6 @@ router.post('/download-reel', asyncHandler(async (req, res) => {
             }
         }
     }
-}));
+});
 
 module.exports = router;
