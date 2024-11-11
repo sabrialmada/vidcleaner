@@ -986,13 +986,17 @@ router.post('/download-reel', async (req, res) => {
     }
 });
 
-module.exports = router; */
+module.exports = router;
+
+ */
+
 
 const express = require('express');
 const puppeteer = require('puppeteer');
 const path = require('path');
 const fs = require('fs').promises;
 const { processVideo } = require('../videoProcessor');
+const { videoQueue } = require('../queue');
 
 const router = express.Router();
 
@@ -1010,9 +1014,6 @@ async function downloadInstagramReel(req, res) {
     console.log(`Reel URL: ${reelUrl}`);
     console.log(`Clean metadata option: ${cleanMetadata}`);
 
-    // Set a longer timeout for the response
-    res.setTimeout(600000); // 10 minutes
-
     if (!isValidInstagramUrl(reelUrl)) {
         console.log('Invalid Instagram reel URL');
         return res.status(400).json({ message: 'Invalid Instagram reel URL.' });
@@ -1021,7 +1022,7 @@ async function downloadInstagramReel(req, res) {
     let browser;
     let tempFilePath;
     let outputFilePath;
-    let processingStarted = false;
+    let job;
 
     try {
         console.log('Launching browser');
@@ -1081,7 +1082,7 @@ async function downloadInstagramReel(req, res) {
                     if (attempt === maxAttempts) {
                         throw e;
                     }
-                    await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retrying
+                    await new Promise(resolve => setTimeout(resolve, 5000));
                 }
             }
 
@@ -1119,33 +1120,64 @@ async function downloadInstagramReel(req, res) {
                 console.log('Cleaning metadata requested, processing video');
                 outputFilePath = path.join(__dirname, '../uploads', `processed_reel_${Date.now()}.mp4`);
                 
-                // Add progress monitoring
-                const progressCallback = (progress) => {
-                    if (!res.headersSent) {
-                        res.write(`data: ${JSON.stringify({ progress })}\n\n`);
-                    }
-                };
-    
-                await processVideo(tempFilePath, outputFilePath, null, progressCallback);
-                
-                // Stream the processed video instead of using res.download
-                const stat = await fs.stat(outputFilePath);
-                res.writeHead(200, {
-                    'Content-Type': 'video/mp4',
-                    'Content-Length': stat.size,
-                    'Content-Disposition': 'attachment; filename=processed_reel.mp4'
+                // Create and monitor processing job
+                job = await videoQueue.add({
+                    inputPath: tempFilePath,
+                    outputPath: outputFilePath,
+                    isReel: true, // Flag to indicate this is a reel
+                    originalName: 'instagram_reel.mp4'
+                }, {
+                    timeout: 300000, // 5 minutes
+                    attempts: 2,
+                    backoff: {
+                        type: 'exponential',
+                        delay: 2000
+                    },
+                    removeOnComplete: true
                 });
-                
-                const readStream = fs.createReadStream(outputFilePath);
-                readStream.pipe(res);
-                
-                readStream.on('end', async () => {
-                    // Cleanup after streaming is complete
+
+                // Wait for job completion
+                await new Promise((resolve, reject) => {
+                    const CHECK_INTERVAL = 1000; // 1 second
+                    const checkJob = async () => {
+                        try {
+                            const currentJob = await videoQueue.getJob(job.id);
+                            if (!currentJob) {
+                                reject(new Error('Job disappeared'));
+                                return;
+                            }
+
+                            const state = await currentJob.getState();
+                            const progress = await currentJob.progress();
+                            
+                            console.log(`Job state: ${state}, Progress: ${progress}%`);
+
+                            if (state === 'completed') {
+                                resolve(currentJob);
+                            } else if (state === 'failed') {
+                                reject(new Error(currentJob.failedReason));
+                            } else {
+                                setTimeout(checkJob, CHECK_INTERVAL);
+                            }
+                        } catch (error) {
+                            reject(error);
+                        }
+                    };
+                    checkJob();
+                });
+
+                console.log('Video processing completed, sending to client');
+                res.download(outputFilePath, 'processed_reel.mp4', async (err) => {
+                    if (err) {
+                        console.error('Error sending the processed file:', err);
+                    }
+                    console.log('Cleaning up temporary files');
                     try {
                         await fs.unlink(tempFilePath);
                         await fs.unlink(outputFilePath);
-                    } catch (error) {
-                        console.error('Cleanup error:', error);
+                        console.log('Temporary files deleted');
+                    } catch (unlinkError) {
+                        console.error('Error deleting temporary files:', unlinkError);
                     }
                 });
             } else {
@@ -1172,16 +1204,24 @@ async function downloadInstagramReel(req, res) {
             console.log('Page closed');
         }
     } catch (error) {
-        console.error('Error in download process:', error);
+        console.error(`Error downloading the reel: ${error.message}`);
+        console.error(`Stack trace: ${error.stack}`);
+        
+        // Cleanup on error
+        try {
+            if (tempFilePath) await fs.unlink(tempFilePath).catch(() => {});
+            if (outputFilePath) await fs.unlink(outputFilePath).catch(() => {});
+            if (job) await job.remove().catch(() => {});
+        } catch (cleanupError) {
+            console.error('Error during cleanup:', cleanupError);
+        }
+
         if (!res.headersSent) {
-            res.status(500).json({ 
-                message: 'Error processing video', 
-                error: error.message,
-                phase: processingStarted ? 'processing' : 'download'
-            });
+            res.status(500).json({ message: 'Error downloading the reel.', error: error.message });
         }
     } finally {
         if (browser) {
+            console.log('Closing browser');
             await browser.close();
         }
     }
@@ -1212,5 +1252,3 @@ router.post('/download-reel', async (req, res) => {
 });
 
 module.exports = router;
-
-

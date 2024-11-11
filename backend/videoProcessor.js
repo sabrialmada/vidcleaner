@@ -955,15 +955,8 @@ function ffmpegPromise(inputPath, outputPath, operation, job) {
 
 function removeMetadata(inputPath, outputPath) {
   return ffmpegPromise(inputPath, outputPath, command => {
-    command.outputOptions('-map_metadata', '-1');
+    command.outputOptions('-map_metadata', '-1', '-c', 'copy');
   });
-}
-
-async function generateMD5(filePath) {
-  const hash = crypto.createHash('md5');
-  const data = await fs.readFile(filePath);
-  hash.update(data);
-  return hash.digest('hex');
 }
 
 function modifyVideo(inputPath, outputPath) {
@@ -1010,83 +1003,123 @@ async function safeDelete(filePath) {
   }
 }
 
-async function processVideo(inputPath, outputPath, job = null, progressCallback = null) {
+async function processVideo(inputPath, outputPath, job = null) {
   const tempFiles = [];
-  let currentPhase = '';
-  
   try {
-      console.log(`Starting video processing for: ${inputPath}`);
+    const checkCancellation = async () => {
+      if (job) {
+        try {
+          const [state, data] = await Promise.all([
+            job.getState(),
+            job.data,
+          ]);
+          
+          if (state === 'removed' || data.cancelRequested) {
+            throw new Error('Job cancelled');
+          }
+        } catch (error) {
+          if (error.message === 'Job cancelled') {
+            throw error;
+          }
+          console.error('Error checking job state:', error);
+        }
+      }
+    };
+
+    await checkCancellation();
+    
+    console.log(`Starting video processing for: ${inputPath}`);
+    await fs.access(inputPath, fs.constants.R_OK);
+    
+    const tempDir = path.dirname(inputPath);
+    await fs.access(tempDir, fs.constants.W_OK);
+
+    // Check if this is an Instagram reel job
+    const isReel = job?.data?.isReel;
+    
+    if (isReel) {
+      // Simplified processing for reels
+      const tempFile = path.join(tempDir, `temp_reel_process_${Date.now()}.mp4`);
+      tempFiles.push(tempFile);
+
+      if (job) {
+        await job.update({ ...job.data, tempFiles });
+      }
+
+      console.log('Processing Instagram reel...');
       
-      // Verify input file exists and is readable
-      try {
-          await fs.access(inputPath, fs.constants.R_OK);
-          const inputStat = await fs.stat(inputPath);
-          if (inputStat.size === 0) {
-              throw new Error('Input file is empty');
-          }
-      } catch (error) {
-          throw new Error(`Input file error: ${error.message}`);
-      }
+      // Step 1: Remove metadata (using copy codec for speed)
+      await checkCancellation();
+      console.log('Removing metadata from reel...');
+      await removeMetadata(inputPath, tempFile);
 
-      // More detailed error handling for FFmpeg operations
-      const ffmpegWithLogging = (command, phase) => {
-          return new Promise((resolve, reject) => {
-              currentPhase = phase;
-              let error = '';
-              
-              command
-                  .on('progress', progress => {
-                      if (progressCallback) {
-                          progressCallback({
-                              phase,
-                              percent: progress.percent,
-                              timemark: progress.timemark
-                          });
-                      }
-                  })
-                  .on('error', (err, stdout, stderr) => {
-                      error = `${err.message}\nStdout: ${stdout}\nStderr: ${stderr}`;
-                      reject(new Error(`FFmpeg ${phase} error: ${error}`));
-                  })
-                  .on('end', () => resolve());
-          });
-      };
+      // Step 2: Apply minor modifications
+      await checkCancellation();
+      console.log('Applying modifications to reel...');
+      await modifyVideo(tempFile, outputPath);
 
-      // Simplified processing pipeline with better error handling
-      const phases = [
-          {
-              name: 'metadata removal',
-              fn: async () => {
-                  const command = ffmpeg(inputPath)
-                      .outputOptions('-map_metadata', '-1')
-                      .outputOptions('-c', 'copy') // Try to copy codecs when possible
-                      .output(outputPath);
-                  
-                  await ffmpegWithLogging(command, 'metadata removal');
-              }
-          }
-      ];
+      const md5Hash = await generateMD5(outputPath);
+      return { md5Hash, outputPath };
+    }
 
-      // Execute phases sequentially
-      for (const phase of phases) {
-          console.log(`Starting ${phase.name}...`);
-          await phase.fn();
-      }
+    // Regular video processing with all steps
+    const tempFile1 = path.join(tempDir, `temp_video_1_${Date.now()}.mp4`);
+    const tempFile2 = path.join(tempDir, `temp_video_2_${Date.now()}.mp4`);
+    tempFiles.push(tempFile1, tempFile2);
 
-      return { success: true, outputPath };
+    if (job) {
+      await job.update({ ...job.data, tempFiles });
+    }
+
+    await checkCancellation();
+    console.log('Removing metadata...');
+    await removeMetadata(inputPath, tempFile1);
+
+    await checkCancellation();
+    console.log('Modifying video...');
+    await modifyVideo(tempFile1, tempFile2);
+
+    await checkCancellation();
+    console.log('Adjusting audio...');
+    await adjustAudio(tempFile2, tempFile1);
+
+    await checkCancellation();
+    console.log('Re-encoding video...');
+    await reencodeVideo(tempFile1, tempFile2);
+
+    await checkCancellation();
+    console.log('Changing color space...');
+    await changeColorSpace(tempFile2, outputPath);
+
+    const md5Hash = await generateMD5(outputPath);
+    return { md5Hash, outputPath };
+
   } catch (error) {
-      console.error(`Error in video processing (${currentPhase}):`, error);
-      throw error;
+    console.error('Error in processVideo:', error);
+    try {
+      await fs.access(outputPath, fs.constants.F_OK);
+      await fs.unlink(outputPath);
+    } catch (cleanupError) {
+      // Ignore if file doesn't exist
+    }
+    throw error;
   } finally {
-      // Cleanup temp files
-      for (const file of tempFiles) {
-          try {
-              await safeDelete(file);
-          } catch (error) {
-              console.error(`Cleanup error for ${file}:`, error);
-          }
+    // Clean up temp files
+    for (const file of tempFiles) {
+      try {
+        await safeDelete(file);
+      } catch (error) {
+        console.error(`Error deleting temp file ${file}:`, error);
       }
+    }
   }
+}
+
+async function generateMD5(filePath) {
+  const hash = crypto.createHash('md5');
+  const data = await fs.readFile(filePath);
+  hash.update(data);
+  return hash.digest('hex');
 }
 
 module.exports = {
