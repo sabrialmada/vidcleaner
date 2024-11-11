@@ -221,9 +221,9 @@
     width: 100%;
   }
 
-  .progress-container {
+  /* .progress-container {
     max-width: 100%;
-  }
+  } */
 }
 
 @media screen and (max-width: 480px) {
@@ -236,7 +236,7 @@
     padding: 15px;
   }
 
-  .progress-item {
+  /* .progress-item {
     padding: 8px;
   }
 
@@ -246,7 +246,7 @@
 
   .progress-text {
     font-size: 10px;
-  }
+  } */
 
   h2 {
     font-size: 20px;
