@@ -1366,22 +1366,17 @@ async function downloadInstagramReel(req, res) {
 
             const ytdlpCommand = [
                 'yt-dlp',
-                '-o', `"${tempOutputPath}"`,
-                `"${reelUrl}"`,
-                '--no-check-certificate',
+                '--format', 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
+                '--no-check-certificates',
+                '--cookies-from-browser', 'chrome',  // Add this
+                '--geo-bypass',  // Add this
+                '--force-overwrites',
                 '--no-warnings',
-                '--ignore-errors',
-                '--no-playlist',
-                '--format', `"${option.format}"`,
+                '--quiet',
+                `--output`, tempOutputPath,
                 '--merge-output-format', 'mp4',
-                '--user-agent', `"${option.userAgent}"`,
-                '--add-header', '"Accept: */*"',
-                '--add-header', '"Accept-Language: en-US,en;q=0.9"',
-                '--add-header', '"Accept-Encoding: gzip, deflate, br"',
-                '--force-ipv4',
-                '--no-abort-on-error',
-                '--extractor-args', '"instagram:headers=\'{"X-IG-App-ID": "936619743392459", "X-IG-WWW-Claim": "0"}\'"',
-                '--socket-timeout', '30'
+                '--extractor-args', 'instagram:headers={"Accept": "*/*", "User-Agent": "Instagram 76.0.0.15.395 Android (24/7.0; 640dpi; 1440x2560; samsung; SM-G930F; herolte; samsungexynos8890; en_US; 138226743)"}',
+                reelUrl
             ].join(' ');
 
             try {
