@@ -682,7 +682,7 @@ module.exports = {
 }; */
 
 
-const ffmpeg = require('fluent-ffmpeg');
+/* const ffmpeg = require('fluent-ffmpeg');
 const crypto = require('crypto');
 const fs = require('fs').promises;
 const path = require('path');
@@ -884,6 +884,208 @@ async function processVideo(inputPath, outputPath, job = null) {
         console.error(`Error deleting temp file ${file}:`, error);
       }
     }
+  }
+}
+
+module.exports = {
+  processVideo,
+  safeDelete
+}; */
+
+
+const ffmpeg = require('fluent-ffmpeg');
+const crypto = require('crypto');
+const fs = require('fs').promises;
+const path = require('path');
+
+function ffmpegPromise(inputPath, outputPath, operation, job) {
+  return new Promise((resolve, reject) => {
+    const command = ffmpeg(inputPath);
+    operation(command);
+
+    let isCancelled = false;
+    let checkCancellation;
+    
+    if (job) {
+      checkCancellation = setInterval(async () => {
+        if (jobStateManager.isJobCancelled(job.id)) {
+          isCancelled = true;
+          command.kill('SIGKILL');
+          clearInterval(checkCancellation);
+        }
+      }, 1000);
+    }
+
+    command
+      .outputOptions('-preset', 'ultrafast')
+      .save(outputPath)
+      .on('start', commandLine => {
+        console.log(`FFmpeg command: ${commandLine}`);
+      })
+      .on('progress', progress => {
+        if (isCancelled) return;
+        const percent = progress.percent ? progress.percent.toFixed(2) : 'N/A';
+        const timemark = progress.timemark || 'N/A';
+        console.log(`Processing: ${percent}% done (Time: ${timemark})`);
+      })
+      .on('end', () => {
+        if (checkCancellation) {
+          clearInterval(checkCancellation);
+        }
+        if (isCancelled) {
+          reject(new Error('Job cancelled'));
+        } else {
+          console.log(`FFmpeg operation completed: ${outputPath}`);
+          resolve();
+        }
+      })
+      .on('error', (err, stdout, stderr) => {
+        if (checkCancellation) {
+          clearInterval(checkCancellation);
+        }
+        if (!isCancelled) {
+          console.error('FFmpeg error:', err.message);
+          console.error('FFmpeg stdout:', stdout);
+          console.error('FFmpeg stderr:', stderr);
+        }
+        reject(isCancelled ? new Error('Job cancelled') : err);
+      });
+  });
+}
+
+function removeMetadata(inputPath, outputPath) {
+  return ffmpegPromise(inputPath, outputPath, command => {
+    command.outputOptions('-map_metadata', '-1');
+  });
+}
+
+async function generateMD5(filePath) {
+  const hash = crypto.createHash('md5');
+  const data = await fs.readFile(filePath);
+  hash.update(data);
+  return hash.digest('hex');
+}
+
+function modifyVideo(inputPath, outputPath) {
+  const scaleFactor = (Math.random() * (1.03 - 1.01) + 1.01).toFixed(2);
+  const cropValue = Math.floor(Math.random() * 5) + 1;
+  
+  return ffmpegPromise(inputPath, outputPath, command => {
+    command.videoFilter(`scale=iw*${scaleFactor}:ih*${scaleFactor}, crop=iw-${cropValue}:ih-${cropValue}`);
+  });
+}
+
+function adjustAudio(inputPath, outputPath) {
+  return ffmpegPromise(inputPath, outputPath, command => {
+    command.audioFilters('asetrate=44100*1.02,aresample=44100');
+  });
+}
+
+function changeColorSpace(inputPath, outputPath) {
+  const colorSpaces = ['bt709', 'smpte240m', 'bt2020'];
+  const randomColorSpace = colorSpaces[Math.floor(Math.random() * colorSpaces.length)];
+  
+  return ffmpegPromise(inputPath, outputPath, command => {
+    command.videoFilter(`colorspace=all=${randomColorSpace}:iall=bt709`);
+  });
+}
+
+function reencodeVideo(inputPath, outputPath) {
+  return ffmpegPromise(inputPath, outputPath, command => {
+    command.videoCodec('libx264').outputOptions('-preset', 'slow', '-crf', '18');
+  });
+}
+
+async function safeDelete(filePath) {
+  try {
+    await fs.access(filePath, fs.constants.F_OK);
+    await fs.unlink(filePath);
+    console.log(`File deleted successfully: ${filePath}`);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      console.log(`File does not exist, skipping deletion: ${filePath}`);
+    } else {
+      console.error(`Error deleting file: ${filePath}`, error);
+    }
+  }
+}
+
+async function processVideo(inputPath, outputPath, job = null, progressCallback = null) {
+  const tempFiles = [];
+  let currentPhase = '';
+  
+  try {
+      console.log(`Starting video processing for: ${inputPath}`);
+      
+      // Verify input file exists and is readable
+      try {
+          await fs.access(inputPath, fs.constants.R_OK);
+          const inputStat = await fs.stat(inputPath);
+          if (inputStat.size === 0) {
+              throw new Error('Input file is empty');
+          }
+      } catch (error) {
+          throw new Error(`Input file error: ${error.message}`);
+      }
+
+      // More detailed error handling for FFmpeg operations
+      const ffmpegWithLogging = (command, phase) => {
+          return new Promise((resolve, reject) => {
+              currentPhase = phase;
+              let error = '';
+              
+              command
+                  .on('progress', progress => {
+                      if (progressCallback) {
+                          progressCallback({
+                              phase,
+                              percent: progress.percent,
+                              timemark: progress.timemark
+                          });
+                      }
+                  })
+                  .on('error', (err, stdout, stderr) => {
+                      error = `${err.message}\nStdout: ${stdout}\nStderr: ${stderr}`;
+                      reject(new Error(`FFmpeg ${phase} error: ${error}`));
+                  })
+                  .on('end', () => resolve());
+          });
+      };
+
+      // Simplified processing pipeline with better error handling
+      const phases = [
+          {
+              name: 'metadata removal',
+              fn: async () => {
+                  const command = ffmpeg(inputPath)
+                      .outputOptions('-map_metadata', '-1')
+                      .outputOptions('-c', 'copy') // Try to copy codecs when possible
+                      .output(outputPath);
+                  
+                  await ffmpegWithLogging(command, 'metadata removal');
+              }
+          }
+      ];
+
+      // Execute phases sequentially
+      for (const phase of phases) {
+          console.log(`Starting ${phase.name}...`);
+          await phase.fn();
+      }
+
+      return { success: true, outputPath };
+  } catch (error) {
+      console.error(`Error in video processing (${currentPhase}):`, error);
+      throw error;
+  } finally {
+      // Cleanup temp files
+      for (const file of tempFiles) {
+          try {
+              await safeDelete(file);
+          } catch (error) {
+              console.error(`Cleanup error for ${file}:`, error);
+          }
+      }
   }
 }
 
