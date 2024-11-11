@@ -1282,17 +1282,49 @@ const fsPromises = require('fs').promises;
 const router = express.Router();
 const uploadsDir = path.join(__dirname, '../uploads');
 
-// Enhanced URL validation
+// Enhanced URL validation with support for more formats
 const isValidInstagramUrl = (url) => {
-    const regex = /^(?:https?:\/\/)?(?:www\.)?(?:instagram\.com\/(?:reel|p)\/[A-Za-z0-9_-]+\/?(?:\?.*)?|instagram\.com\/.*?\/(?:reel|p)\/[A-Za-z0-9_-]+\/?(?:\?.*)?)$/;
+    const regex = /^(?:https?:\/\/)?(?:www\.)?(?:instagram\.com\/(?:reel|p|reels|stories|tv)\/[A-Za-z0-9_-]+\/?(?:\?.*)?|instagram\.com\/.*?\/(?:reel|p)\/[A-Za-z0-9_-]+\/?(?:\?.*)?)$/;
     return regex.test(url);
 };
 
+// Retry mechanism for failed operations
+async function retryOperation(operation, maxRetries = 3, delay = 1000) {
+    let lastError;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            return await operation();
+        } catch (error) {
+            lastError = error;
+            if (attempt === maxRetries) break;
+            console.log(`Attempt ${attempt} failed, retrying in ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay * attempt));
+        }
+    }
+    throw lastError;
+}
+
+// Safe file deletion
+async function safeDeleteFile(filePath) {
+    try {
+        if (filePath) {
+            await fsPromises.access(filePath, fs.constants.F_OK);
+            await fsPromises.unlink(filePath);
+            console.log(`Successfully deleted: ${filePath}`);
+        }
+    } catch (error) {
+        console.error(`Error deleting file ${filePath}:`, error.message);
+    }
+}
+
+// Main download function
 async function downloadInstagramReel(req, res) {
     console.log('Starting Instagram reel download process');
     const reelUrl = req.body.reelUrl?.trim();
     const cleanMetadata = req.body.cleanMetadata;
-    
+    let tempOutputPath = null;
+    let finalOutputPath = null;
+
     if (!reelUrl) {
         return res.status(400).json({ message: 'No URL provided.' });
     }
@@ -1306,54 +1338,78 @@ async function downloadInstagramReel(req, res) {
     }
 
     const uniqueId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-    const tempOutputPath = path.join(uploadsDir, `temp_reel_${uniqueId}.mp4`);
-    let finalOutputPath = path.join(uploadsDir, `instagram_reel_${uniqueId}.mp4`);
+    tempOutputPath = path.join(uploadsDir, `temp_reel_${uniqueId}.mp4`);
+    finalOutputPath = path.join(uploadsDir, `instagram_reel_${uniqueId}.mp4`);
 
     try {
-        // Modified yt-dlp command without browser cookies dependency
-        console.log('Downloading reel using yt-dlp');
-        const ytdlpCommand = [
-            'yt-dlp',
-            '-o', `"${tempOutputPath}"`,
-            `"${reelUrl}"`,
-            '--no-check-certificate',
-            '--no-warnings',
-            '--ignore-errors',
-            '--no-playlist',
-            '--format', 'best[ext=mp4]',
-            '--user-agent', '"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"',
-            '--add-header', '"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8"',
-            '--add-header', '"Accept-Language: en-US,en;q=0.9"',
-            '--add-header', '"sec-ch-ua: Google Chrome;v=119"',
-            '--add-header', '"sec-ch-ua-mobile: ?0"',
-            '--add-header', '"sec-ch-ua-platform: Windows"',
-            '--add-header', '"Upgrade-Insecure-Requests: 1"',
-            '--add-header', '"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"',
-            '--add-header', '"Accept-Encoding: gzip, deflate, br"',
-            '--add-header', '"Sec-Fetch-Site: none"',
-            '--add-header', '"Sec-Fetch-Mode: navigate"',
-            '--add-header', '"Sec-Fetch-User: ?1"',
-            '--add-header', '"Sec-Fetch-Dest: document"',
-            '--no-abort-on-error',
-            '--no-mark-watched',
-            '--extractor-args', '"instagram:headers=\'{"X-IG-App-ID": "936619743392459"}\'"'
-        ].join(' ');
+        // Enhanced yt-dlp command with multiple fallback options
+        const downloadOptions = [
+            {
+                userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Mobile/15E148 Safari/604.1',
+                format: 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best'
+            },
+            {
+                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                format: 'best[ext=mp4]/best'
+            },
+            {
+                userAgent: 'Instagram 219.0.0.12.117 Android',
+                format: 'best[ext=mp4]/best'
+            }
+        ];
 
-        const { stdout, stderr } = await execPromise(ytdlpCommand);
-        console.log('yt-dlp output:', stdout);
-        if (stderr) console.error('yt-dlp stderr:', stderr);
+        let downloaded = false;
+        let downloadError = null;
 
-        const fileExists = await fsPromises.access(tempOutputPath, fs.constants.F_OK)
-            .then(() => true)
-            .catch(() => false);
+        for (const option of downloadOptions) {
+            if (downloaded) break;
 
-        if (!fileExists) {
-            throw new Error('Failed to download the video file');
+            const ytdlpCommand = [
+                'yt-dlp',
+                '-o', `"${tempOutputPath}"`,
+                `"${reelUrl}"`,
+                '--no-check-certificate',
+                '--no-warnings',
+                '--ignore-errors',
+                '--no-playlist',
+                '--format', `"${option.format}"`,
+                '--merge-output-format', 'mp4',
+                '--user-agent', `"${option.userAgent}"`,
+                '--add-header', '"Accept: */*"',
+                '--add-header', '"Accept-Language: en-US,en;q=0.9"',
+                '--add-header', '"Accept-Encoding: gzip, deflate, br"',
+                '--force-ipv4',
+                '--no-abort-on-error',
+                '--extractor-args', '"instagram:headers=\'{"X-IG-App-ID": "936619743392459", "X-IG-WWW-Claim": "0"}\'"',
+                '--socket-timeout', '30'
+            ].join(' ');
+
+            try {
+                await retryOperation(async () => {
+                    const { stdout, stderr } = await execPromise(ytdlpCommand);
+                    console.log('yt-dlp output:', stdout);
+                    if (stderr) console.error('yt-dlp stderr:', stderr);
+                });
+
+                const fileExists = await fsPromises.access(tempOutputPath, fs.constants.F_OK)
+                    .then(() => true)
+                    .catch(() => false);
+
+                if (fileExists) {
+                    downloaded = true;
+                    console.log('Download completed successfully');
+                }
+            } catch (error) {
+                downloadError = error;
+                console.error(`Download attempt failed with user agent ${option.userAgent}:`, error.message);
+            }
         }
 
-        console.log('Download completed');
+        if (!downloaded) {
+            throw downloadError || new Error('Failed to download video after all attempts');
+        }
 
-        // Improved FFmpeg encoding
+        // Enhanced FFmpeg encoding with better quality settings
         console.log('Re-encoding video for compatibility');
         await new Promise((resolve, reject) => {
             execFile(ffmpegPath, [
@@ -1362,16 +1418,21 @@ async function downloadInstagramReel(req, res) {
                 '-preset', 'medium',
                 '-crf', '23',
                 '-c:a', 'aac',
-                '-b:a', '128k',
+                '-b:a', '192k',
                 '-movflags', '+faststart',
                 '-pix_fmt', 'yuv420p',
+                '-profile:v', 'main',
+                '-level', '3.1',
+                '-maxrate', '2M',
+                '-bufsize', '4M',
+                '-af', 'aresample=async=1000',
+                '-y',
                 finalOutputPath
             ], (error, stdout, stderr) => {
                 if (error) {
                     console.error('FFmpeg error:', error);
                     reject(error);
                 } else {
-                    console.log('FFmpeg output:', stdout);
                     if (stderr) console.error('FFmpeg stderr:', stderr);
                     resolve();
                 }
@@ -1383,48 +1444,41 @@ async function downloadInstagramReel(req, res) {
             console.log('Cleaning metadata requested, processing video');
             const cleanedFilePath = `${finalOutputPath}_cleaned.mp4`;
             await processVideo(finalOutputPath, cleanedFilePath);
-            await fsPromises.unlink(finalOutputPath);
+            await safeDeleteFile(finalOutputPath);
             finalOutputPath = cleanedFilePath;
         }
 
-        // Improved download handling
+        // Enhanced file sending with proper error handling
         console.log('Sending processed video to client');
-        res.setHeader('Content-Type', 'video/mp4');
-        res.setHeader('Content-Disposition', 'attachment; filename="instagram_reel.mp4"');
-        res.setHeader('Cache-Control', 'no-cache');
+        const stats = await fsPromises.stat(finalOutputPath);
         
-        const fileStream = fs.createReadStream(finalOutputPath);
-        fileStream.pipe(res);
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Content-Length', stats.size);
+        res.setHeader('Content-Disposition', 'attachment; filename="instagram_reel.mp4"');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
 
-        fileStream.on('end', async () => {
-            console.log('File stream completed');
-            try {
-                await fsPromises.unlink(tempOutputPath);
-                await fsPromises.unlink(finalOutputPath);
-                console.log('Temporary files deleted');
-            } catch (unlinkError) {
-                console.error('Error deleting temporary files:', unlinkError);
-            }
-        });
+        const fileStream = fs.createReadStream(finalOutputPath);
 
         fileStream.on('error', (error) => {
             console.error('Error streaming file:', error);
             if (!res.headersSent) {
                 res.status(500).json({ message: 'Error streaming video file.' });
             }
+            cleanup();
         });
+
+        res.on('finish', cleanup);
+        res.on('close', cleanup);
+
+        fileStream.pipe(res);
 
     } catch (error) {
         console.error(`Error processing the reel: ${error.message}`);
         console.error(`Error details:`, error);
         
-        // Cleanup
-        try {
-            await fsPromises.unlink(tempOutputPath).catch(() => {});
-            await fsPromises.unlink(finalOutputPath).catch(() => {});
-        } catch (cleanupError) {
-            console.error('Error during cleanup:', cleanupError);
-        }
+        await cleanup();
 
         if (!res.headersSent) {
             let errorMessage = 'Error processing the reel.';
@@ -1432,11 +1486,17 @@ async function downloadInstagramReel(req, res) {
                 errorMessage = 'This Instagram Reel is unavailable. It might be private or deleted.';
             } else if (error.message.includes('Unable to extract video info')) {
                 errorMessage = 'Unable to extract video information. The reel might be private or Instagram might have changed their structure.';
-            } else if (error.message.includes('Failed to download the video file')) {
+            } else if (error.message.includes('Failed to download')) {
                 errorMessage = 'Failed to download the video file. The reel might be unavailable or there might be network issues.';
             }
             res.status(500).json({ message: errorMessage, error: error.message });
         }
+    }
+
+    async function cleanup() {
+        console.log('Cleaning up temporary files');
+        await safeDeleteFile(tempOutputPath);
+        await safeDeleteFile(finalOutputPath);
     }
 }
 
