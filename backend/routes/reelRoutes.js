@@ -1352,6 +1352,13 @@ const { videoQueue } = require('../queue');
 
 const router = express.Router();
 
+// Utility functions
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+const getBackoffDelay = (attempt) => {
+    return Math.min(1000 * Math.pow(2, attempt), 30000);
+};
+
 // Function to validate Instagram Reel URL
 const isValidInstagramUrl = (url) => {
     const regex = /^(https?:\/\/)?(www\.)?instagram\.com\/reel\/[A-Za-z0-9_-]+\/?(?:\?.*)?$/;
@@ -1423,6 +1430,22 @@ async function createPage(browser) {
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
         await page.setRequestInterception(false);
         await page.setJavaScriptEnabled(true);
+
+        // Add error and console logging
+        page.on('error', err => {
+            console.error('Page error:', err);
+        });
+
+        page.on('console', msg => {
+            console.log('Page console:', msg.text());
+        });
+
+        page.on('response', response => {
+            const status = response.status();
+            if (status >= 400) {
+                console.log(`Response status ${status} for URL: ${response.url()}`);
+            }
+        });
         
         return page;
     } catch (error) {
@@ -1431,14 +1454,81 @@ async function createPage(browser) {
     }
 }
 
-// Helper function to extract video URL with retries
+// Helper function to save debug information
+async function saveDebugInfo(page, prefix = 'debug') {
+    try {
+        const timestamp = Date.now();
+        const screenshotPath = path.join(__dirname, '../uploads', `${prefix}_screenshot_${timestamp}.png`);
+        const htmlPath = path.join(__dirname, '../uploads', `${prefix}_html_${timestamp}.html`);
+
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+        const html = await page.content();
+        await fs.writeFile(htmlPath, html);
+
+        console.log(`Debug files saved:
+Screenshot: ${screenshotPath}
+HTML: ${htmlPath}`);
+    } catch (error) {
+        console.error('Error saving debug info:', error);
+    }
+}
+
+// Helper function to extract video URL with retries and rate limit handling
 async function extractVideoUrl(page, maxAttempts = 10) {
+    let rateLimitHit = false;
+    let rateLimitCount = 0;
+    
+    page.on('response', response => {
+        if (response.status() === 429) {
+            rateLimitHit = true;
+            rateLimitCount++;
+            console.log(`Rate limit hit (count: ${rateLimitCount})`);
+        }
+    });
+
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         console.log(`Attempting to extract video URL (attempt ${attempt + 1}/${maxAttempts})`);
         
-        const videoUrl = await page.evaluate(async () => {
-            await new Promise(resolve => setTimeout(resolve, 1500)); // Increased wait time
+        if (rateLimitHit) {
+            const backoffDelay = getBackoffDelay(attempt + rateLimitCount);
+            console.log(`Rate limit hit, waiting ${backoffDelay}ms before retry...`);
+            await delay(backoffDelay);
+            rateLimitHit = false;
             
+            try {
+                await page.reload({ 
+                    waitUntil: ['networkidle0', 'domcontentloaded'],
+                    timeout: 30000 
+                });
+                await delay(2000);
+            } catch (error) {
+                console.error('Error reloading page:', error);
+            }
+        }
+
+        const videoUrl = await page.evaluate(async () => {
+            // Wait for content to load
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Video element detection with timeout
+            try {
+                await new Promise((resolve, reject) => {
+                    const checkForVideo = () => {
+                        const video = document.querySelector('video');
+                        if (video && video.src) {
+                            resolve();
+                        } else if (document.readyState === 'complete') {
+                            setTimeout(checkForVideo, 500);
+                        }
+                    };
+                    checkForVideo();
+                    setTimeout(reject, 5000);
+                });
+            } catch (e) {
+                console.log('Timeout waiting for video element');
+            }
+
+            // Try multiple selector strategies
             const selectors = [
                 'video',
                 'video source',
@@ -1446,8 +1536,10 @@ async function extractVideoUrl(page, maxAttempts = 10) {
                 'article video',
                 '._aatk video',
                 '._ab1d video',
-                // Add more Instagram-specific selectors if needed
-                'div[role="presentation"] video'
+                'div[role="presentation"] video',
+                '.EmbeddedMediaVideo video',
+                '._aabd video',
+                '[data-visualcompletion="media-vc-image"] video'
             ];
 
             for (const selector of selectors) {
@@ -1455,16 +1547,16 @@ async function extractVideoUrl(page, maxAttempts = 10) {
                 if (element) {
                     if (element.tagName === 'VIDEO') {
                         const src = element.src || element.currentSrc;
-                        if (src) return src;
+                        if (src && src.includes('cdninstagram.com')) return src;
                     }
                     if (element.tagName === 'SOURCE') {
                         const src = element.src;
-                        if (src) return src;
+                        if (src && src.includes('cdninstagram.com')) return src;
                     }
                 }
             }
 
-            // Try finding video in any media element
+            // Try finding video in network requests
             const mediaElements = document.querySelectorAll('[src*="cdninstagram.com"]');
             for (const element of mediaElements) {
                 if (element.src && element.src.includes('.mp4')) {
@@ -1480,53 +1572,63 @@ async function extractVideoUrl(page, maxAttempts = 10) {
             return videoUrl;
         }
 
-        console.log('Waiting before next attempt...');
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        if (!rateLimitHit) {
+            console.log('Waiting before next attempt...');
+            await delay(3000);
+        }
     }
     
-    // Take debug screenshot if video not found
-    try {
-        const screenshotPath = path.join(__dirname, '../uploads', `debug_screenshot_${Date.now()}.png`);
-        await page.screenshot({ path: screenshotPath, fullPage: true });
-        console.log(`Debug screenshot saved to ${screenshotPath}`);
-    } catch (error) {
-        console.error('Error taking debug screenshot:', error);
-    }
-    
+    await saveDebugInfo(page, 'video_not_found');
     return null;
 }
 
-// Helper function to download video buffer
-async function downloadVideoBuffer(page, videoUrl) {
-    console.log('Downloading video buffer');
-    const buffer = await page.evaluate(async (url) => {
+// Helper function to download video buffer with retries
+async function downloadVideoBuffer(page, videoUrl, maxAttempts = 3) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
-            const response = await fetch(url, {
-                headers: {
-                    'Accept': 'video/mp4,video/*;q=0.9,*/*;q=0.8',
-                    'Range': 'bytes=0-',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            console.log(`Downloading video buffer (attempt ${attempt + 1}/${maxAttempts})`);
+            const buffer = await page.evaluate(async (url) => {
+                try {
+                    const response = await fetch(url, {
+                        headers: {
+                            'Accept': 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+                            'Range': 'bytes=0-',
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                        }
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const buffer = await response.arrayBuffer();
+                    if (buffer.byteLength === 0) {
+                        throw new Error('Empty buffer received');
+                    }
+                    
+                    return Array.from(new Uint8Array(buffer));
+                } catch (error) {
+                    console.error('Error downloading video:', error);
+                    return null;
                 }
-            });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            
-            const buffer = await response.arrayBuffer();
-            return Array.from(new Uint8Array(buffer));
-        } catch (error) {
-            console.error('Error downloading video:', error);
-            return null;
-        }
-    }, videoUrl);
+            }, videoUrl);
 
-    if (!buffer) {
-        throw new Error('Failed to download video buffer');
+            if (buffer && buffer.length > 0) {
+                return Buffer.from(buffer);
+            }
+
+            console.log('Invalid buffer received, retrying...');
+            await delay(getBackoffDelay(attempt));
+        } catch (error) {
+            console.error(`Download attempt ${attempt + 1} failed:`, error);
+            if (attempt === maxAttempts - 1) throw error;
+            await delay(getBackoffDelay(attempt));
+        }
     }
 
-    return Buffer.from(buffer);
+    throw new Error('Failed to download video after all attempts');
 }
+
 // Main function to download Instagram Reel
 async function downloadInstagramReel(req, res) {
     console.log('Starting Instagram reel download process');
@@ -1559,38 +1661,52 @@ async function downloadInstagramReel(req, res) {
         page = await createPage(browser);
         console.log('Page created successfully');
 
-        page.on('error', err => {
-            console.error('Page error:', err);
-        });
-
-        page.on('console', msg => {
-            console.log('Page console:', msg.text());
-        });
-
         let attempt = 0;
-        const maxAttempts = 3;
+        const maxAttempts = 5;
         let success = false;
 
         while (attempt < maxAttempts && !success) {
             try {
                 console.log(`Navigation attempt ${attempt + 1}/${maxAttempts}`);
+                
+                // Clear cookies and cache before each attempt
+                await page.evaluate(() => {
+                    localStorage.clear();
+                    sessionStorage.clear();
+                });
+                
                 await page.goto(reelUrl, {
                     waitUntil: ['networkidle0', 'domcontentloaded'],
                     timeout: 60000
                 });
+                
+                await delay(2000);
                 success = true;
                 console.log('Navigation successful');
             } catch (error) {
                 console.error(`Navigation attempt ${attempt + 1} failed:`, error.message);
                 attempt++;
-                if (attempt === maxAttempts) throw error;
-                await new Promise(resolve => setTimeout(resolve, 5000));
+                
+                if (attempt === maxAttempts) {
+                    throw new Error('Failed to navigate to reel URL after all attempts');
+                }
+                
+                const backoffDelay = getBackoffDelay(attempt);
+                console.log(`Waiting ${backoffDelay}ms before retry...`);
+                await delay(backoffDelay);
+                
+                try {
+                    await page.close();
+                    page = await createPage(browser);
+                } catch (e) {
+                    console.error('Error recreating page:', e);
+                }
             }
         }
 
         const videoUrl = await extractVideoUrl(page);
         if (!videoUrl) {
-            console.log('Unable to find video on the page');
+            await saveDebugInfo(page, 'no_video_found');
             return res.status(400).json({ 
                 message: 'Unable to find the video. The reel might be private or unavailable.' 
             });
@@ -1602,6 +1718,12 @@ async function downloadInstagramReel(req, res) {
         tempFilePath = path.join(__dirname, '../uploads', `temp_reel_${Date.now()}.mp4`);
         console.log(`Saving temporary file: ${tempFilePath}`);
         await fs.writeFile(tempFilePath, buffer);
+
+        // Verify the saved file
+        const fileStats = await fs.stat(tempFilePath);
+        if (fileStats.size === 0) {
+            throw new Error('Downloaded file is empty');
+        }
 
         if (cleanMetadata) {
             console.log('Cleaning metadata requested, processing video');
@@ -1746,6 +1868,7 @@ async function downloadInstagramReel(req, res) {
         console.error(`Error downloading the reel: ${error.message}`);
         console.error(`Stack trace: ${error.stack}`);
         
+        // Enhanced cleanup
         try {
             if (tempFilePath) {
                 await verifyFile(tempFilePath) && await fs.unlink(tempFilePath);
@@ -1765,7 +1888,7 @@ async function downloadInstagramReel(req, res) {
 
         if (!res.headersSent) {
             res.status(500).json({ 
-                message: 'Error processing the reel.',
+                message: 'Error downloading the reel.',
                 error: error.message 
             });
         }
