@@ -1368,118 +1368,10 @@ const verifyFile = async (filePath) => {
     }
 };
 
-// Helper function to extract video URL with retries
-const extractVideoUrl = async (page, maxAttempts = 10) => {
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        console.log(`Attempting to extract video URL (attempt ${attempt + 1}/${maxAttempts})`);
-        
-        const videoUrl = await page.evaluate(async () => {
-            // Wait for dynamic content
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            // Try different selectors
-            const selectors = [
-                'video',
-                'video source',
-                '[role="main"] video',
-                'article video',
-                '._aatk video',
-                '._ab1d video'
-            ];
-
-            for (const selector of selectors) {
-                const element = document.querySelector(selector);
-                if (element) {
-                    if (element.tagName === 'VIDEO') {
-                        return element.src || element.currentSrc;
-                    }
-                    if (element.tagName === 'SOURCE') {
-                        return element.src;
-                    }
-                }
-            }
-
-            // Try finding video in network requests
-            const mediaElements = document.querySelectorAll('[src*="cdninstagram.com"]');
-            for (const element of mediaElements) {
-                if (element.src && element.src.includes('.mp4')) {
-                    return element.src;
-                }
-            }
-
-            return null;
-        });
-
-        if (videoUrl) {
-            console.log('Video URL found');
-            return videoUrl;
-        }
-
-        // Wait before next attempt
-        await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-    
-    // Take debug screenshot if video not found
-    const screenshotPath = path.join(__dirname, '../uploads', `debug_screenshot_${Date.now()}.png`);
-    await page.screenshot({ path: screenshotPath, fullPage: true });
-    console.log(`Debug screenshot saved to ${screenshotPath}`);
-    
-    return null;
-};
-
-// Helper function to download video buffer
-const downloadVideoBuffer = async (page, videoUrl) => {
-    console.log('Downloading video buffer');
-    const buffer = await page.evaluate(async (url) => {
-        try {
-            const response = await fetch(url, {
-                headers: {
-                    'Accept': 'video/mp4,video/*;q=0.9,*/*;q=0.8',
-                    'Range': 'bytes=0-'
-                }
-            });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            
-            const buffer = await response.arrayBuffer();
-            return Array.from(new Uint8Array(buffer));
-        } catch (error) {
-            console.error('Error downloading video:', error);
-            return null;
-        }
-    }, videoUrl);
-
-    if (!buffer) {
-        throw new Error('Failed to download video buffer');
-    }
-
-    return Buffer.from(buffer);
-};
-
-// Main function to download Instagram Reel
-async function downloadInstagramReel(req, res) {
-    console.log('Starting Instagram reel download process');
-    const reelUrl = req.body.reelUrl;
-    const cleanMetadata = req.body.cleanMetadata;
-    console.log(`Reel URL: ${reelUrl}`);
-    console.log(`Clean metadata option: ${cleanMetadata}`);
-
-    if (!isValidInstagramUrl(reelUrl)) {
-        console.log('Invalid Instagram reel URL');
-        return res.status(400).json({ message: 'Invalid Instagram reel URL.' });
-    }
-
-    let browser;
-    let page;
-    let tempFilePath;
-    let outputFilePath;
-    let job;
-
+// Browser creation helper
+async function createBrowser() {
     try {
-        console.log('Launching browser');
-        browser = await puppeteer.launch({
+        const browser = await puppeteer.launch({
             headless: "new",
             args: [
                 '--no-sandbox',
@@ -1506,220 +1398,354 @@ async function downloadInstagramReel(req, res) {
                 '--mute-audio',
                 '--no-pings',
                 '--disable-component-update',
-                '--disable-features=TranslateUI'
+                '--disable-features=TranslateUI',
+                '--disable-web-security',
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--blink-settings=imagesEnabled=true'
             ],
             executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-            timeout: 30000
+            ignoreHTTPSErrors: true,
+            timeout: 60000
         });
 
-        // Handle browser disconnection
-        browser.on('disconnected', () => {
-            console.log('Browser disconnected');
-        });
-        try {
-            // Create and configure page
-            page = await browser.newPage();
-            await page.setDefaultNavigationTimeout(60000);
-            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3');
-            console.log('New page created and configured');
+        return browser;
+    } catch (error) {
+        console.error('Error creating browser:', error);
+        throw error;
+    }
+}
 
-            // Navigate to reel URL with retries
-            let attempt = 0;
-            const maxAttempts = 3;
-            let success = false;
+// Page creation helper
+async function createPage(browser) {
+    try {
+        const page = await browser.newPage();
+        await page.setDefaultNavigationTimeout(60000);
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+        await page.setRequestInterception(false);
+        await page.setJavaScriptEnabled(true);
+        
+        return page;
+    } catch (error) {
+        console.error('Error creating page:', error);
+        throw error;
+    }
+}
 
-            while (!attempt < maxAttempts) {
-                try {
-                    console.log(`Attempt ${attempt + 1} to navigate to reel URL`);
-                    await page.goto(reelUrl, { 
-                        waitUntil: ['networkidle2', 'domcontentloaded'], 
-                        timeout: 60000 
-                    });
-                    success = true;
-                    console.log('Successfully navigated to reel URL');
-                    break;
-                } catch (e) {
-                    console.log(`Attempt ${attempt + 1} failed:`, e.message);
-                    attempt++;
-                    if (attempt === maxAttempts) throw e;
-                    await new Promise(resolve => setTimeout(resolve, 5000));
+// Helper function to extract video URL with retries
+async function extractVideoUrl(page, maxAttempts = 10) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        console.log(`Attempting to extract video URL (attempt ${attempt + 1}/${maxAttempts})`);
+        
+        const videoUrl = await page.evaluate(async () => {
+            await new Promise(resolve => setTimeout(resolve, 1500)); // Increased wait time
+            
+            const selectors = [
+                'video',
+                'video source',
+                '[role="main"] video',
+                'article video',
+                '._aatk video',
+                '._ab1d video',
+                // Add more Instagram-specific selectors if needed
+                'div[role="presentation"] video'
+            ];
+
+            for (const selector of selectors) {
+                const element = document.querySelector(selector);
+                if (element) {
+                    if (element.tagName === 'VIDEO') {
+                        const src = element.src || element.currentSrc;
+                        if (src) return src;
+                    }
+                    if (element.tagName === 'SOURCE') {
+                        const src = element.src;
+                        if (src) return src;
+                    }
                 }
             }
 
-            // Extract video URL
-            const videoUrl = await extractVideoUrl(page);
-            if (!videoUrl) {
-                console.log('Unable to find video on the page');
-                return res.status(400).json({ 
-                    message: 'Unable to find the video. The reel might be private or unavailable.' 
-                });
+            // Try finding video in any media element
+            const mediaElements = document.querySelectorAll('[src*="cdninstagram.com"]');
+            for (const element of mediaElements) {
+                if (element.src && element.src.includes('.mp4')) {
+                    return element.src;
+                }
             }
-            console.log(`Video URL found: ${videoUrl}`);
 
-            // Download video
-            const buffer = await downloadVideoBuffer(page, videoUrl);
+            return null;
+        });
+
+        if (videoUrl && videoUrl.includes('cdninstagram.com')) {
+            console.log('Valid video URL found');
+            return videoUrl;
+        }
+
+        console.log('Waiting before next attempt...');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    
+    // Take debug screenshot if video not found
+    try {
+        const screenshotPath = path.join(__dirname, '../uploads', `debug_screenshot_${Date.now()}.png`);
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+        console.log(`Debug screenshot saved to ${screenshotPath}`);
+    } catch (error) {
+        console.error('Error taking debug screenshot:', error);
+    }
+    
+    return null;
+}
+
+// Helper function to download video buffer
+async function downloadVideoBuffer(page, videoUrl) {
+    console.log('Downloading video buffer');
+    const buffer = await page.evaluate(async (url) => {
+        try {
+            const response = await fetch(url, {
+                headers: {
+                    'Accept': 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+                    'Range': 'bytes=0-',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+            });
             
-            tempFilePath = path.join(__dirname, '../uploads', `temp_reel_${Date.now()}.mp4`);
-            console.log(`Saving temporary file: ${tempFilePath}`);
-            await fs.writeFile(tempFilePath, buffer);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const buffer = await response.arrayBuffer();
+            return Array.from(new Uint8Array(buffer));
+        } catch (error) {
+            console.error('Error downloading video:', error);
+            return null;
+        }
+    }, videoUrl);
 
-            if (cleanMetadata) {
-                console.log('Cleaning metadata requested, processing video');
-                outputFilePath = path.join(__dirname, '../uploads', `processed_reel_${Date.now()}.mp4`);
-                
-                // Create processing job
-                job = await videoQueue.add({
-                    inputPath: tempFilePath,
-                    outputPath: outputFilePath,
-                    isReel: true,
-                    originalName: 'instagram_reel.mp4'
-                }, {
-                    timeout: 300000,
-                    attempts: 2,
-                    backoff: {
-                        type: 'exponential',
-                        delay: 2000
-                    },
-                    removeOnComplete: false
+    if (!buffer) {
+        throw new Error('Failed to download video buffer');
+    }
+
+    return Buffer.from(buffer);
+}
+// Main function to download Instagram Reel
+async function downloadInstagramReel(req, res) {
+    console.log('Starting Instagram reel download process');
+    const reelUrl = req.body.reelUrl;
+    const cleanMetadata = req.body.cleanMetadata;
+    console.log(`Reel URL: ${reelUrl}`);
+    console.log(`Clean metadata option: ${cleanMetadata}`);
+
+    if (!isValidInstagramUrl(reelUrl)) {
+        console.log('Invalid Instagram reel URL');
+        return res.status(400).json({ message: 'Invalid Instagram reel URL.' });
+    }
+
+    let browser = null;
+    let page = null;
+    let tempFilePath = null;
+    let outputFilePath = null;
+    let job = null;
+
+    try {
+        console.log('Initializing browser...');
+        browser = await createBrowser();
+        console.log('Browser created successfully');
+
+        browser.on('disconnected', () => {
+            console.log('Browser was disconnected');
+        });
+
+        console.log('Creating page...');
+        page = await createPage(browser);
+        console.log('Page created successfully');
+
+        page.on('error', err => {
+            console.error('Page error:', err);
+        });
+
+        page.on('console', msg => {
+            console.log('Page console:', msg.text());
+        });
+
+        let attempt = 0;
+        const maxAttempts = 3;
+        let success = false;
+
+        while (attempt < maxAttempts && !success) {
+            try {
+                console.log(`Navigation attempt ${attempt + 1}/${maxAttempts}`);
+                await page.goto(reelUrl, {
+                    waitUntil: ['networkidle0', 'domcontentloaded'],
+                    timeout: 60000
                 });
+                success = true;
+                console.log('Navigation successful');
+            } catch (error) {
+                console.error(`Navigation attempt ${attempt + 1} failed:`, error.message);
+                attempt++;
+                if (attempt === maxAttempts) throw error;
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+        }
 
-                // Monitor job progress
-                await new Promise((resolve, reject) => {
-                    let lastState = null;
-                    let completed = false;
-                    let processingTimeout;
+        const videoUrl = await extractVideoUrl(page);
+        if (!videoUrl) {
+            console.log('Unable to find video on the page');
+            return res.status(400).json({ 
+                message: 'Unable to find the video. The reel might be private or unavailable.' 
+            });
+        }
+        console.log(`Video URL found: ${videoUrl}`);
 
-                    const cleanup = () => {
-                        if (processingTimeout) {
-                            clearTimeout(processingTimeout);
+        const buffer = await downloadVideoBuffer(page, videoUrl);
+        
+        tempFilePath = path.join(__dirname, '../uploads', `temp_reel_${Date.now()}.mp4`);
+        console.log(`Saving temporary file: ${tempFilePath}`);
+        await fs.writeFile(tempFilePath, buffer);
+
+        if (cleanMetadata) {
+            console.log('Cleaning metadata requested, processing video');
+            outputFilePath = path.join(__dirname, '../uploads', `processed_reel_${Date.now()}.mp4`);
+            
+            job = await videoQueue.add({
+                inputPath: tempFilePath,
+                outputPath: outputFilePath,
+                isReel: true,
+                originalName: 'instagram_reel.mp4'
+            }, {
+                timeout: 300000,
+                attempts: 2,
+                backoff: {
+                    type: 'exponential',
+                    delay: 2000
+                },
+                removeOnComplete: false
+            });
+
+            await new Promise((resolve, reject) => {
+                let lastState = null;
+                let completed = false;
+                let processingTimeout;
+
+                const cleanup = () => {
+                    if (processingTimeout) {
+                        clearTimeout(processingTimeout);
+                    }
+                };
+
+                processingTimeout = setTimeout(() => {
+                    cleanup();
+                    reject(new Error('Processing timeout'));
+                }, 240000);
+
+                const checkJob = async () => {
+                    try {
+                        if (completed) return;
+
+                        const currentJob = await videoQueue.getJob(job.id);
+                        
+                        if (!currentJob) {
+                            const fileExists = await verifyFile(outputFilePath);
+                            if (fileExists) {
+                                completed = true;
+                                cleanup();
+                                resolve();
+                                return;
+                            }
+                            reject(new Error('Job completed but output file not found'));
+                            return;
                         }
-                    };
 
-                    processingTimeout = setTimeout(() => {
-                        cleanup();
-                        reject(new Error('Processing timeout'));
-                    }, 240000);
+                        const state = await currentJob.getState();
+                        const progress = await currentJob.progress();
 
-                    const checkJob = async () => {
-                        try {
-                            if (completed) return;
+                        if (state !== lastState) {
+                            console.log(`Job ${job.id} state changed to: ${state}`);
+                            lastState = state;
+                        }
 
-                            const currentJob = await videoQueue.getJob(job.id);
-                            
-                            if (!currentJob) {
+                        switch (state) {
+                            case 'completed':
                                 const fileExists = await verifyFile(outputFilePath);
                                 if (fileExists) {
                                     completed = true;
                                     cleanup();
-                                    resolve();
+                                    resolve(currentJob);
                                     return;
                                 }
                                 reject(new Error('Job completed but output file not found'));
                                 return;
-                            }
-
-                            const state = await currentJob.getState();
-                            const progress = await currentJob.progress();
-
-                            if (state !== lastState) {
-                                console.log(`Job ${job.id} state changed to: ${state}`);
-                                lastState = state;
-                            }
-
-                            switch (state) {
-                                case 'completed':
-                                    const fileExists = await verifyFile(outputFilePath);
-                                    if (fileExists) {
-                                        completed = true;
-                                        cleanup();
-                                        resolve(currentJob);
-                                        return;
-                                    }
-                                    reject(new Error('Job completed but output file not found'));
-                                    return;
-                                case 'failed':
-                                    cleanup();
-                                    reject(new Error(currentJob.failedReason || 'Job failed'));
-                                    return;
-                                case 'stuck':
-                                    cleanup();
-                                    reject(new Error('Job is stuck'));
-                                    return;
-                                default:
-                                    console.log(`Processing: ${progress}%`);
-                                    setTimeout(checkJob, 1000);
-                            }
-                        } catch (error) {
-                            if (!completed) {
+                            case 'failed':
                                 cleanup();
-                                reject(error);
-                            }
+                                reject(new Error(currentJob.failedReason || 'Job failed'));
+                                return;
+                            case 'stuck':
+                                cleanup();
+                                reject(new Error('Job is stuck'));
+                                return;
+                            default:
+                                console.log(`Processing: ${progress}%`);
+                                setTimeout(checkJob, 1000);
                         }
-                    };
+                    } catch (error) {
+                        if (!completed) {
+                            cleanup();
+                            reject(error);
+                        }
+                    }
+                };
 
-                    checkJob();
-                });
+                checkJob();
+            });
 
-                // Send processed file
-                console.log('Verifying processed file...');
-                const fileExists = await verifyFile(outputFilePath);
-                if (!fileExists) {
-                    throw new Error('Processed file not found');
+            console.log('Verifying processed file...');
+            const fileExists = await verifyFile(outputFilePath);
+            if (!fileExists) {
+                throw new Error('Processed file not found');
+            }
+
+            console.log('Sending processed file to client');
+            res.download(outputFilePath, 'processed_reel.mp4', async (err) => {
+                if (err) {
+                    console.error('Error sending the processed file:', err);
                 }
-
-                console.log('Sending processed file to client');
-                res.download(outputFilePath, 'processed_reel.mp4', async (err) => {
-                    if (err) {
-                        console.error('Error sending the processed file:', err);
-                    }
-                    console.log('Cleaning up files after download');
-                    await Promise.all([
-                        fs.unlink(tempFilePath).catch(e => console.error('Error deleting temp file:', e)),
-                        fs.unlink(outputFilePath).catch(e => console.error('Error deleting output file:', e))
-                    ]);
-                    
-                    if (job) {
-                        try {
-                            const jobInstance = await videoQueue.getJob(job.id);
-                            if (jobInstance) {
-                                await jobInstance.remove();
-                                console.log('Job cleaned up');
-                            }
-                        } catch (error) {
-                            console.error('Error cleaning up job:', error);
-                        }
-                    }
-                });
-            } else {
-                console.log('Sending original video to client without processing');
-                res.download(tempFilePath, 'reel.mp4', async (err) => {
-                    if (err) {
-                        console.error('Error sending the file:', err);
-                    }
-                    console.log('Cleaning up temporary file');
+                console.log('Cleaning up files after download');
+                await Promise.all([
+                    fs.unlink(tempFilePath).catch(e => console.error('Error deleting temp file:', e)),
+                    fs.unlink(outputFilePath).catch(e => console.error('Error deleting output file:', e))
+                ]);
+                
+                if (job) {
                     try {
-                        await fs.unlink(tempFilePath);
-                        console.log('Temporary file deleted');
-                    } catch (unlinkError) {
-                        console.error('Error deleting temporary file:', unlinkError);
+                        const jobInstance = await videoQueue.getJob(job.id);
+                        if (jobInstance) {
+                            await jobInstance.remove();
+                            console.log('Job cleaned up');
+                        }
+                    } catch (error) {
+                        console.error('Error cleaning up job:', error);
                     }
-                });
-            }
-        } catch (pageError) {
-            console.error(`Error in page operations: ${pageError.message}`);
-            console.error(pageError.stack);
-            throw pageError;
-        } finally {
-            if (page) {
-                await page.close().catch(e => console.error('Error closing page:', e));
-                console.log('Page closed');
-            }
+                }
+            });
+        } else {
+            console.log('Sending original video to client without processing');
+            res.download(tempFilePath, 'reel.mp4', async (err) => {
+                if (err) {
+                    console.error('Error sending the file:', err);
+                }
+                console.log('Cleaning up temporary file');
+                try {
+                    await fs.unlink(tempFilePath);
+                    console.log('Temporary file deleted');
+                } catch (unlinkError) {
+                    console.error('Error deleting temporary file:', unlinkError);
+                }
+            });
         }
     } catch (error) {
         console.error(`Error downloading the reel: ${error.message}`);
         console.error(`Stack trace: ${error.stack}`);
         
-        // Enhanced cleanup
         try {
             if (tempFilePath) {
                 await verifyFile(tempFilePath) && await fs.unlink(tempFilePath);
@@ -1744,9 +1770,24 @@ async function downloadInstagramReel(req, res) {
             });
         }
     } finally {
+        if (page) {
+            try {
+                console.log('Closing page...');
+                await page.close().catch(e => console.error('Error closing page:', e));
+                console.log('Page closed successfully');
+            } catch (error) {
+                console.error('Error during page cleanup:', error);
+            }
+        }
+        
         if (browser) {
-            await browser.close().catch(e => console.error('Error closing browser:', e));
-            console.log('Browser closed');
+            try {
+                console.log('Closing browser...');
+                await browser.close().catch(e => console.error('Error closing browser:', e));
+                console.log('Browser closed successfully');
+            } catch (error) {
+                console.error('Error during browser cleanup:', error);
+            }
         }
     }
 }
