@@ -1527,59 +1527,147 @@ HTML: ${htmlPath}`);
 
 // Helper function to extract video URL with retries and rate limit handling
 async function extractVideoUrl(page, maxAttempts = 10) {
+    let videoUrls = [];
+    
+    // Set up CDP session for network monitoring first
+    const client = await page.target().createCDPSession();
+    await client.send('Network.enable');
+    
+    client.on('Network.responseReceived', (event) => {
+        const { response } = event;
+        if (response.url.includes('cdninstagram.com') && 
+            (response.url.includes('.mp4') || response.mimeType === 'video/mp4')) {
+            console.log('Found video URL in network request:', response.url);
+            videoUrls.push(response.url);
+        }
+    });
+
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
-            // Wait for video element with timeout
-            await page.waitForSelector('video', { timeout: 5000 });
-            
-            const videoUrl = await page.evaluate(() => {
-                const video = document.querySelector('video');
-                if (video && video.src) {
-                    return video.src;
-                }
-                
-                // Fallback to source elements
-                const sources = document.querySelectorAll('source');
-                for (const source of sources) {
-                    if (source.src && source.src.includes('cdninstagram.com')) {
-                        return source.src;
-                    }
-                }
-                
-                return null;
-            });
+            console.log(`Video extraction attempt ${attempt + 1}/${maxAttempts}`);
 
-            if (videoUrl && videoUrl.includes('cdninstagram.com')) {
-                return videoUrl;
+            // First check network requests from previous attempts
+            if (videoUrls.length > 0) {
+                console.log('Found video URL from network monitoring');
+                return videoUrls[0];
             }
 
-            // If no video found, try to find it in network requests
-            const client = await page.target().createCDPSession();
-            await client.send('Network.enable');
-            
-            const videoUrls = [];
-            client.on('Network.responseReceived', (event) => {
-                const { response } = event;
-                if (response.url.includes('cdninstagram.com') && response.url.includes('.mp4')) {
-                    videoUrls.push(response.url);
+            // Try multiple approaches in parallel
+            const results = await Promise.allSettled([
+                // Approach 1: Direct video element
+                page.evaluate(() => {
+                    const video = document.querySelector('video');
+                    return video ? video.src || video.currentSrc : null;
+                }),
+
+                // Approach 2: Multiple selectors
+                page.evaluate(() => {
+                    const selectors = [
+                        'video',
+                        'video source',
+                        '[role="main"] video',
+                        'article video',
+                        '._aatk video',
+                        '._ab1d video',
+                        'div[role="presentation"] video',
+                        '.EmbeddedMediaVideo video',
+                        '._aabd video',
+                        '[data-visualcompletion="media-vc-image"] video'
+                    ];
+
+                    for (const selector of selectors) {
+                        const element = document.querySelector(selector);
+                        if (element?.tagName === 'VIDEO') {
+                            return element.src || element.currentSrc;
+                        }
+                    }
+                    return null;
+                }),
+
+                // Approach 3: Source elements
+                page.evaluate(() => {
+                    const sources = document.querySelectorAll('source[type="video/mp4"], source[src*=".mp4"]');
+                    for (const source of sources) {
+                        if (source.src) return source.src;
+                    }
+                    return null;
+                }),
+
+                // Approach 4: Media elements
+                page.evaluate(() => {
+                    const mediaElements = document.querySelectorAll('[src*="cdninstagram.com"]');
+                    for (const element of mediaElements) {
+                        if (element.src?.includes('.mp4')) return element.src;
+                    }
+                    return null;
+                }),
+
+                // Approach 5: Check for video in shadow DOM
+                page.evaluate(() => {
+                    function searchShadowDOM(root) {
+                        if (!root) return null;
+                        
+                        // Check regular children
+                        const videos = root.querySelectorAll('video');
+                        for (const video of videos) {
+                            if (video.src) return video.src;
+                        }
+
+                        // Check shadow roots
+                        const elements = root.querySelectorAll('*');
+                        for (const element of elements) {
+                            if (element.shadowRoot) {
+                                const result = searchShadowDOM(element.shadowRoot);
+                                if (result) return result;
+                            }
+                        }
+                        return null;
+                    }
+                    return searchShadowDOM(document);
+                })
+            ]);
+
+            // Process results from all approaches
+            for (const result of results) {
+                if (result.status === 'fulfilled' && result.value) {
+                    const url = result.value;
+                    if (url && url.includes('cdninstagram.com')) {
+                        console.log('Found video URL through DOM inspection');
+                        return url;
+                    }
                 }
-            });
+            }
 
-            // Refresh page and wait for new requests
-            await page.reload({ waitUntil: 'networkidle0' });
-            await page.waitForTimeout(3000);
+            // If no video found, try waiting and refreshing
+            console.log('No video found, waiting before retry...');
+            await page.waitForTimeout(2000);
 
-            if (videoUrls.length > 0) {
-                return videoUrls[0];
+            if (attempt < maxAttempts - 1) {
+                console.log('Refreshing page...');
+                await page.reload({ 
+                    waitUntil: ['networkidle0', 'domcontentloaded'],
+                    timeout: 30000 
+                });
+                await page.waitForTimeout(2000);
             }
 
         } catch (error) {
             console.error(`Attempt ${attempt + 1} failed:`, error);
-            if (attempt === maxAttempts - 1) throw error;
+            if (attempt === maxAttempts - 1) {
+                console.error('All video extraction attempts failed');
+                throw error;
+            }
             await page.waitForTimeout(2000);
         }
     }
 
+    // If we got here, check network requests one last time
+    if (videoUrls.length > 0) {
+        return videoUrls[0];
+    }
+
+    console.log('No video URL found after all attempts');
+    await saveDebugInfo(page, 'video_extraction_failed');
     return null;
 }
 
