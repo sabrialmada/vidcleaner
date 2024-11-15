@@ -1384,38 +1384,32 @@ async function createBrowser() {
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
                 '--disable-gpu',
-                '--no-first-run',
                 '--no-zygote',
                 '--single-process',
+                '--disable-extensions',
                 '--disable-background-networking',
                 '--disable-background-timer-throttling',
                 '--disable-backgrounding-occluded-windows',
                 '--disable-breakpad',
                 '--disable-client-side-phishing-detection',
                 '--disable-default-apps',
-                '--disable-extensions',
-                '--disable-features=site-per-process',
-                '--disable-hang-monitor',
                 '--disable-popup-blocking',
-                '--disable-prompt-on-repost',
                 '--disable-sync',
                 '--disable-translate',
                 '--metrics-recording-only',
-                '--mute-audio',
-                '--no-pings',
-                '--disable-component-update',
-                '--disable-features=TranslateUI',
-                '--disable-web-security',
-                '--disable-features=IsolateOrigins',
-                '--blink-settings=imagesEnabled=true',
-                '--disable-features=StorageAccessAPI',
-                '--disable-blink-features=StorageAPIWorkaround'
+                '--no-first-run',
+                '--safebrowsing-disable-auto-update',
+                '--disable-features=IsolateOrigins,site-per-process'
             ],
             executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
             ignoreHTTPSErrors: true,
-            timeout: 60000
+            timeout: 30000
+        });
+
+        // Add disconnect handler
+        browser.on('disconnected', () => {
+            console.log('Browser disconnected. This could be expected or due to an error.');
         });
 
         return browser;
@@ -1426,45 +1420,89 @@ async function createBrowser() {
 }
 
 // Page creation helper
-async function createPage(browser) {
-    try {
-        const page = await browser.newPage();
-        
-        // Block unnecessary resources
-        await page.setRequestInterception(true);
-        page.on('request', (request) => {
-            const resourceType = request.resourceType();
-            if (['stylesheet', 'font', 'image'].includes(resourceType)) {
-                request.abort();
-            } else {
-                request.continue();
+async function createPage(browser, maxRetries = 3) {
+    let retryCount = 0;
+    let page = null;
+
+    while (retryCount < maxRetries) {
+        try {
+            // Check if browser is still connected
+            if (!browser.isConnected()) {
+                throw new Error('Browser is disconnected');
             }
-        });
 
-        // Set viewport and user agent
-        await page.setViewport({ width: 1280, height: 800 });
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-        
-        // Bypass localStorage and sessionStorage errors
-        await page.evaluateOnNewDocument(() => {
-            Object.defineProperties(window, {
-                'localStorage': {
-                    value: {},
-                    configurable: true,
-                    writable: true
-                },
-                'sessionStorage': {
-                    value: {},
-                    configurable: true,
-                    writable: true
-                }
+            console.log(`Attempting to create page (attempt ${retryCount + 1}/${maxRetries})`);
+            page = await browser.newPage();
+
+            // Basic configuration first
+            await page.setDefaultNavigationTimeout(30000);
+            await page.setViewport({ width: 1280, height: 800 });
+            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+
+            // Disable localStorage and sessionStorage errors
+            await page.evaluateOnNewDocument(() => {
+                Object.defineProperties(window, {
+                    'localStorage': {
+                        value: {},
+                        configurable: true,
+                        writable: true
+                    },
+                    'sessionStorage': {
+                        value: {},
+                        configurable: true,
+                        writable: true
+                    }
+                });
             });
-        });
 
-        return page;
-    } catch (error) {
-        console.error('Error creating page:', error);
-        throw error;
+            // Instead of using request interception, use a more basic approach
+            await page.setRequestInterception(true).catch(() => {
+                console.log('Request interception setup failed, continuing without it');
+            });
+
+            if (page.on) {  // Check if page event binding is available
+                page.on('request', (request) => {
+                    try {
+                        const resourceType = request.resourceType();
+                        if (['stylesheet', 'font', 'image'].includes(resourceType)) {
+                            request.abort().catch(() => request.continue());
+                        } else {
+                            request.continue().catch(() => {});
+                        }
+                    } catch (error) {
+                        request.continue().catch(() => {});
+                    }
+                });
+
+                // Add error logging
+                page.on('error', err => console.error('Page error:', err));
+                page.on('pageerror', err => console.error('Page error:', err));
+                page.on('console', msg => {
+                    if (msg.type() === 'error') {
+                        console.log('Page console error:', msg.text());
+                    }
+                });
+            }
+
+            return page;
+        } catch (error) {
+            console.error(`Failed to create page (attempt ${retryCount + 1}):`, error);
+            if (page) {
+                try {
+                    await page.close().catch(() => {});
+                } catch (closeError) {
+                    console.error('Error closing failed page:', closeError);
+                }
+            }
+            
+            retryCount++;
+            if (retryCount === maxRetries) {
+                throw new Error(`Failed to create page after ${maxRetries} attempts`);
+            }
+            
+            // Wait before retry
+            await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+        }
     }
 }
 
@@ -1616,50 +1654,82 @@ async function downloadInstagramReel(req, res) {
         browser = await createBrowser();
         console.log('Browser created successfully');
 
-        browser.on('disconnected', () => {
+        // Add disconnect handler with reconnection logic
+        browser.on('disconnected', async () => {
             console.log('Browser was disconnected');
+            if (!browser.isConnected() && !res.headersSent) {
+                try {
+                    browser = await createBrowser();
+                    console.log('Browser reconnected successfully');
+                } catch (error) {
+                    console.error('Failed to reconnect browser:', error);
+                }
+            }
         });
 
-        console.log('Creating page...');
-        page = await createPage(browser);
-        console.log('Page created successfully');
+        // Create page with retry logic
+        let pageCreated = false;
+        let pageAttempt = 0;
+        const maxPageAttempts = 3;
 
-        let attempt = 0;
-        const maxAttempts = 5;
-        let success = false;
-
-        while (attempt < maxAttempts && !success) {
+        while (!pageCreated && pageAttempt < maxPageAttempts) {
             try {
-                console.log(`Navigation attempt ${attempt + 1}/${maxAttempts}`);
+                console.log(`Creating page attempt ${pageAttempt + 1}/${maxPageAttempts}...`);
+                page = await createPage(browser);
+                pageCreated = true;
+                console.log('Page created successfully');
+            } catch (error) {
+                console.error(`Page creation attempt ${pageAttempt + 1} failed:`, error);
+                pageAttempt++;
+                if (pageAttempt === maxPageAttempts) {
+                    throw new Error('Failed to create page after multiple attempts');
+                }
+                await delay(1000 * pageAttempt);
+            }
+        }
+
+        // Navigation with retry logic
+        let navigationAttempt = 0;
+        const maxNavigationAttempts = 5;
+        let navigationSuccess = false;
+
+        while (navigationAttempt < maxNavigationAttempts && !navigationSuccess) {
+            try {
+                console.log(`Navigation attempt ${navigationAttempt + 1}/${maxNavigationAttempts}`);
                 
-                // Clear cookies and cache before each attempt
+                // Clear storage with error handling
                 await page.evaluate(() => {
-                    localStorage.clear();
-                    sessionStorage.clear();
-                });
+                    try {
+                        localStorage.clear();
+                        sessionStorage.clear();
+                    } catch (e) {
+                        console.log('Storage clear failed, continuing...');
+                    }
+                }).catch(() => console.log('Storage clear evaluation failed'));
                 
                 await page.goto(reelUrl, {
                     waitUntil: ['networkidle0', 'domcontentloaded'],
-                    timeout: 60000
+                    timeout: 30000
                 });
                 
                 await delay(2000);
-                success = true;
+                navigationSuccess = true;
                 console.log('Navigation successful');
             } catch (error) {
-                console.error(`Navigation attempt ${attempt + 1} failed:`, error.message);
-                attempt++;
+                console.error(`Navigation attempt ${navigationAttempt + 1} failed:`, error.message);
+                navigationAttempt++;
                 
-                if (attempt === maxAttempts) {
+                if (navigationAttempt === maxNavigationAttempts) {
                     throw new Error('Failed to navigate to reel URL after all attempts');
                 }
                 
-                const backoffDelay = getBackoffDelay(attempt);
+                const backoffDelay = getBackoffDelay(navigationAttempt);
                 console.log(`Waiting ${backoffDelay}ms before retry...`);
                 await delay(backoffDelay);
                 
+                // Recreate page on navigation failure
                 try {
-                    await page.close();
+                    await page.close().catch(() => console.log('Failed to close old page'));
                     page = await createPage(browser);
                 } catch (e) {
                     console.error('Error recreating page:', e);
@@ -1667,7 +1737,13 @@ async function downloadInstagramReel(req, res) {
             }
         }
 
-        const videoUrl = await extractVideoUrl(page);
+        // Extract video URL with enhanced error handling
+        const videoUrl = await extractVideoUrl(page).catch(async (error) => {
+            console.error('Error extracting video URL:', error);
+            await saveDebugInfo(page, 'video_extraction_failed');
+            return null;
+        });
+
         if (!videoUrl) {
             await saveDebugInfo(page, 'no_video_found');
             return res.status(400).json({ 
@@ -1676,7 +1752,26 @@ async function downloadInstagramReel(req, res) {
         }
         console.log(`Video URL found: ${videoUrl}`);
 
-        const buffer = await downloadVideoBuffer(page, videoUrl);
+        // Download video with retry logic
+        let downloadAttempt = 0;
+        const maxDownloadAttempts = 3;
+        let buffer = null;
+
+        while (downloadAttempt < maxDownloadAttempts && !buffer) {
+            try {
+                buffer = await downloadVideoBuffer(page, videoUrl);
+                if (!buffer || buffer.length === 0) {
+                    throw new Error('Empty buffer received');
+                }
+            } catch (error) {
+                console.error(`Download attempt ${downloadAttempt + 1} failed:`, error);
+                downloadAttempt++;
+                if (downloadAttempt === maxDownloadAttempts) {
+                    throw new Error('Failed to download video after all attempts');
+                }
+                await delay(getBackoffDelay(downloadAttempt));
+            }
+        }
         
         tempFilePath = path.join(__dirname, '../uploads', `temp_reel_${Date.now()}.mp4`);
         console.log(`Saving temporary file: ${tempFilePath}`);
@@ -1856,6 +1951,7 @@ async function downloadInstagramReel(req, res) {
             });
         }
     } finally {
+        // Enhanced cleanup with proper order and error handling
         if (page) {
             try {
                 console.log('Closing page...');
