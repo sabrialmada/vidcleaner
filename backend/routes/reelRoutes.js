@@ -1408,17 +1408,37 @@ async function createBrowser(options = {}) {
                     '--disable-features=IsolateOrigins,site-per-process',
                     '--disable-features=StorageAccessAPI',
                     '--disable-blink-features=StorageAPIWorkaround',
-                    '--disable-web-security'
+                    '--disable-web-security',
+                    '--ignore-certificate-errors',
+                    '--disable-blink-features',
+                    '--disable-infobars',
+                    '--window-size=1920,1080',
+                    '--start-maximized'
                 ],
                 executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
                 ignoreHTTPSErrors: true,
-                timeout: 30000,
-                pipe: true
+                timeout: 60000,
+                pipe: true,
+                defaultViewport: {
+                    width: 1920,
+                    height: 1080
+                }
             });
 
-            // Set up disconnection handler if provided
+            // Set up disconnect handling
             if (onDisconnect) {
-                browser.on('disconnected', onDisconnect);
+                const disconnectHandler = async () => {
+                    console.log('Browser disconnected event triggered');
+                    browser._isConnected = false;
+                    await onDisconnect();
+                };
+                browser.on('disconnected', disconnectHandler);
+            }
+
+            // Additional connection verification
+            const pages = await browser.pages();
+            if (!pages || pages.length === 0) {
+                throw new Error('Browser created but no pages available');
             }
 
             console.log('Browser created successfully');
@@ -1426,7 +1446,7 @@ async function createBrowser(options = {}) {
         } catch (error) {
             console.error(`Browser creation attempt ${attempt + 1} failed:`, error);
             if (attempt === maxRetries - 1) throw error;
-            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
         }
     }
     throw new Error('Failed to create browser after all attempts');
@@ -1437,65 +1457,58 @@ async function createPage(browser, maxRetries = 3) {
     let retryCount = 0;
     let page = null;
 
-    const verifyBrowserConnection = async () => {
-        if (!browser.isConnected()) {
-            throw new Error('Browser is disconnected');
-        }
-        try {
-            // Test browser connection with a simple operation
-            await browser.version();
-        } catch (error) {
-            throw new Error('Browser connection test failed');
-        }
-    };
-
     while (retryCount < maxRetries) {
         try {
-            await verifyBrowserConnection();
+            // Verify browser connection
+            if (!browser.isConnected()) {
+                throw new Error('Browser is disconnected');
+            }
 
-            console.log(`Attempting to create page (attempt ${retryCount + 1}/${maxRetries})`);
-            page = await browser.newPage().catch(async (error) => {
-                console.error('Error in newPage():', error);
-                await verifyBrowserConnection();
-                throw error;
-            });
+            console.log(`Creating page (attempt ${retryCount + 1}/${maxRetries})`);
+            page = await browser.newPage();
 
-            // Immediately verify the page is usable
-            await page.evaluate(() => true).catch(error => {
-                throw new Error('Page verification failed: ' + error.message);
-            });
-
-            // Basic configuration
+            // Configure page settings
             await Promise.all([
-                page.setDefaultNavigationTimeout(30000),
-                page.setViewport({ width: 1280, height: 800 }),
-                page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
-            ]).catch(error => {
-                throw new Error('Page configuration failed: ' + error.message);
+                page.setDefaultNavigationTimeout(60000),
+                page.setDefaultTimeout(60000),
+                page.setViewport({
+                    width: 1920,
+                    height: 1080,
+                    deviceScaleFactor: 1,
+                }),
+                page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.84 Safari/537.36'),
+                page.setExtraHTTPHeaders({
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive'
+                })
+            ]);
+
+            // Set up request interception for performance
+            await page.setRequestInterception(true);
+            page.on('request', (request) => {
+                const resourceType = request.resourceType();
+                if (['stylesheet', 'font', 'image'].includes(resourceType)) {
+                    request.abort();
+                } else {
+                    request.continue();
+                }
             });
 
-            // Set up error handling
+            // Set up error logging
             page.on('error', err => console.error('Page error:', err));
             page.on('pageerror', err => console.error('Page error:', err));
-
-            // Minimal request interception
-            await page.setRequestInterception(true).catch(() => {
-                console.log('Request interception setup failed, continuing without it');
+            page.on('console', msg => {
+                if (msg.type() === 'error' || msg.type() === 'warning') {
+                    console.log(`Console ${msg.type()}: ${msg.text()}`);
+                }
             });
 
-            if (page.on) {
-                page.on('request', (request) => {
-                    try {
-                        const resourceType = request.resourceType();
-                        if (['stylesheet', 'font', 'image'].includes(resourceType)) {
-                            request.abort().catch(() => request.continue());
-                        } else {
-                            request.continue().catch(() => {});
-                        }
-                    } catch (error) {
-                        request.continue().catch(() => {});
-                    }
-                });
+            // Additional page verification
+            const isPageValid = await page.evaluate(() => true).catch(() => false);
+            if (!isPageValid) {
+                throw new Error('Page verification failed');
             }
 
             console.log('Page created and configured successfully');
@@ -1516,9 +1529,107 @@ async function createPage(browser, maxRetries = 3) {
                 throw new Error(`Failed to create page after ${maxRetries} attempts`);
             }
             
-            // Exponential backoff
-            await new Promise(resolve => setTimeout(resolve, Math.min(1000 * Math.pow(2, retryCount), 5000)));
+            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
         }
+    }
+}
+
+// Helper function to handle navigation with better reliability
+async function navigateToUrl(page, url, maxAttempts = 5) {
+    let attempt = 0;
+    while (attempt < maxAttempts) {
+        try {
+            console.log(`Navigation attempt ${attempt + 1}/${maxAttempts} to: ${url}`);
+            
+            // Clear storage and cache
+            await Promise.all([
+                page.evaluate(() => {
+                    try {
+                        localStorage.clear();
+                        sessionStorage.clear();
+                        caches?.delete?.();
+                    } catch (e) {}
+                }),
+                page.evaluate(() => {
+                    document.cookie.split(";").forEach((c) => {
+                        document.cookie = c
+                            .replace(/^ +/, "")
+                            .replace(/=.*/, `=;expires=${new Date().toUTCString()};path=/`);
+                    });
+                })
+            ]).catch(() => {});
+            
+            // Navigate with proper wait conditions
+            await Promise.all([
+                page.goto(url, {
+                    waitUntil: ['networkidle0', 'domcontentloaded'],
+                    timeout: 30000
+                }),
+                page.waitForFunction(() => document.readyState === 'complete'),
+            ]);
+
+            await page.waitForTimeout(2000);
+            console.log('Navigation successful');
+            return true;
+        } catch (error) {
+            console.error(`Navigation attempt ${attempt + 1} failed:`, error);
+            attempt++;
+            
+            if (attempt === maxAttempts) {
+                throw new Error('Failed to navigate after all attempts');
+            }
+            
+            await page.waitForTimeout(getBackoffDelay(attempt));
+        }
+    }
+    return false;
+}
+
+// Helper function for better cleanup
+async function cleanup(browser, page, tempFilePath, outputFilePath, job) {
+    console.log('Starting cleanup process...');
+    
+    try {
+        // Close page
+        if (page && !page.isClosed()) {
+            console.log('Closing page...');
+            await page.close().catch(e => console.error('Error closing page:', e));
+            console.log('Page closed successfully');
+        }
+        
+        // Close browser
+        if (browser && browser.isConnected()) {
+            console.log('Closing browser...');
+            browser.removeAllListeners('disconnected');
+            await browser.close().catch(e => console.error('Error closing browser:', e));
+            console.log('Browser closed successfully');
+        }
+        
+        // Clean up files
+        if (tempFilePath) {
+            console.log('Cleaning up temporary file...');
+            await fs.unlink(tempFilePath).catch(e => 
+                console.error('Error deleting temp file:', e));
+        }
+        
+        if (outputFilePath) {
+            console.log('Cleaning up output file...');
+            await fs.unlink(outputFilePath).catch(e => 
+                console.error('Error deleting output file:', e));
+        }
+        
+        // Clean up job
+        if (job) {
+            console.log('Cleaning up job...');
+            const jobInstance = await videoQueue.getJob(job.id);
+            if (jobInstance) {
+                await jobInstance.remove();
+            }
+        }
+        
+        console.log('Cleanup completed successfully');
+    } catch (error) {
+        console.error('Error during cleanup:', error);
     }
 }
 
@@ -1543,50 +1654,101 @@ HTML: ${htmlPath}`);
 
 // Helper function to extract video URL with retries and rate limit handling
 async function extractVideoUrl(page, maxAttempts = 5) {
-    // Store found videos with their quality info
-    const videoUrls = new Map();
+    const videoStreams = new Map();
     
     // Set up network monitoring
     const client = await page.target().createCDPSession();
     await client.send('Network.enable');
     
-    client.on('Network.responseReceived', (event) => {
-        const { response } = event;
-        if (response.url.includes('cdninstagram.com') && response.url.includes('.mp4')) {
-            // Check if it's a video stream (not audio)
-            if (!response.url.includes('_audio')) {
-                // Get resolution from URL or default to 0
-                const quality = response.url.includes('q90') ? 90 :
-                              response.url.includes('q60') ? 60 :
-                              response.url.includes('q30') ? 30 : 0;
-                              
-                videoUrls.set(quality, response.url);
-                console.log(`Found video URL (quality: ${quality}):`, response.url);
+    return new Promise((resolve, reject) => {
+        let resolved = false;
+        
+        // Network response handler
+        client.on('Network.responseReceived', (event) => {
+            const { response } = event;
+            if (response.url.includes('cdninstagram.com')) {
+                // For video streams
+                if (response.url.includes('.mp4') && !response.url.includes('_audio')) {
+                    // Parse quality from URL
+                    let quality = 0;
+                    if (response.url.includes('dash_r2evevp9-r1gen2vp9_q90')) quality = 90;
+                    else if (response.url.includes('dash_r2evevp9-r1gen2vp9_q60')) quality = 60;
+                    else if (response.url.includes('dash_r2evevp9-r1gen2vp9_q30')) quality = 30;
+                    // Check vcodec in URL parameters
+                    const urlParams = new URLSearchParams(new URL(response.url).search);
+                    const efg = urlParams.get('efg');
+                    if (efg) {
+                        try {
+                            const efgData = JSON.parse(decodeURIComponent(efg));
+                            if (efgData.vencode_tag && efgData.vencode_tag.includes('q90')) quality = Math.max(quality, 90);
+                        } catch (e) {}
+                    }
+                    
+                    // Store stream URL without byte range parameters
+                    const baseUrl = response.url.split('&bytestart')[0];
+                    console.log(`Found video stream (quality: ${quality}):`, baseUrl);
+                    videoStreams.set(quality, baseUrl);
+                    
+                    // Resolve with highest quality stream so far
+                    if (!resolved) {
+                        const qualities = Array.from(videoStreams.keys());
+                        if (qualities.length > 0) {
+                            const maxQuality = Math.max(...qualities);
+                            resolved = true;
+                            resolve(videoStreams.get(maxQuality));
+                        }
+                    }
+                }
             }
-        }
+        });
+
+        // Start page interaction
+        (async () => {
+            for (let attempt = 0; attempt < maxAttempts && !resolved; attempt++) {
+                try {
+                    await page.waitForTimeout(2000);
+                    if (attempt < maxAttempts - 1) {
+                        await page.reload({ 
+                            waitUntil: 'networkidle0',
+                            timeout: 30000 
+                        });
+                    }
+                } catch (error) {
+                    console.error(`Attempt ${attempt + 1} failed:`, error);
+                }
+            }
+            
+            // If we haven't resolved by now, try one last time with any quality
+            if (!resolved && videoStreams.size > 0) {
+                const firstUrl = videoStreams.values().next().value;
+                resolved = true;
+                resolve(firstUrl);
+            } else if (!resolved) {
+                reject(new Error('No video stream found'));
+            }
+        })();
+
+        // Set timeout
+        setTimeout(() => {
+            if (!resolved) {
+                reject(new Error('Video extraction timeout'));
+            }
+        }, 30000);
     });
+}
 
-    // Wait for navigation and video detection
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        try {
-            if (videoUrls.size > 0) {
-                // Get highest quality video
-                const highestQuality = Math.max(...videoUrls.keys());
-                return videoUrls.get(highestQuality);
-            }
-
-            // Wait a bit and refresh if needed
-            await page.waitForTimeout(2000);
-            if (attempt < maxAttempts - 1) {
-                await page.reload({ waitUntil: 'networkidle0' });
-            }
-        } catch (error) {
-            console.error(`Attempt ${attempt + 1} failed:`, error);
-            if (attempt === maxAttempts - 1) throw error;
-        }
-    }
-
-    return null;
+// Helper function to validate video data
+function isValidMP4Buffer(buffer) {
+    if (!buffer || buffer.length < 8) return false;
+    
+    // Check for MP4 signature
+    const signature = buffer.slice(4, 8).toString();
+    if (signature !== 'ftyp') return false;
+    
+    // Check for minimum valid size (100KB)
+    if (buffer.length < 100 * 1024) return false;
+    
+    return true;
 }
 
 // Helper function to download video buffer with retries
@@ -1595,14 +1757,12 @@ async function downloadVideoBuffer(page, videoUrl, maxAttempts = 3) {
         try {
             console.log(`Downloading video (attempt ${attempt + 1}/${maxAttempts})`);
             
-            // Remove any byte range parameters
-            const cleanUrl = videoUrl.split('&bytestart')[0];
-            
             const buffer = await page.evaluate(async (url) => {
                 try {
                     const response = await fetch(url, {
                         headers: {
                             'Accept': 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+                            'Range': 'bytes=0-',
                             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                         }
                     });
@@ -1611,32 +1771,35 @@ async function downloadVideoBuffer(page, videoUrl, maxAttempts = 3) {
                         throw new Error(`HTTP error! status: ${response.status}`);
                     }
                     
-                    const buffer = await response.arrayBuffer();
-                    return Array.from(new Uint8Array(buffer));
+                    // Verify content type
+                    const contentType = response.headers.get('content-type');
+                    if (!contentType?.includes('video/')) {
+                        throw new Error(`Invalid content type: ${contentType}`);
+                    }
+                    
+                    const arrayBuffer = await response.arrayBuffer();
+                    return Array.from(new Uint8Array(arrayBuffer));
                 } catch (error) {
                     console.error('Download error:', error);
                     return null;
                 }
-            }, cleanUrl);
+            }, videoUrl);
 
             if (buffer && buffer.length > 0) {
                 const videoBuffer = Buffer.from(buffer);
-                // Verify it's a valid MP4
-                if (videoBuffer.length > 8 && 
-                    videoBuffer.slice(4, 8).toString() === 'ftyp') {
+                if (isValidMP4Buffer(videoBuffer)) {
+                    console.log(`Successfully downloaded video (${videoBuffer.length} bytes)`);
                     return videoBuffer;
                 }
-                throw new Error('Invalid MP4 file received');
+                throw new Error('Invalid MP4 file structure');
             }
-
-            throw new Error('Empty or invalid buffer received');
+            throw new Error('Empty buffer received');
         } catch (error) {
             console.error(`Download attempt ${attempt + 1} failed:`, error);
             if (attempt === maxAttempts - 1) throw error;
             await delay(getBackoffDelay(attempt));
         }
     }
-
     throw new Error('Failed to download video after all attempts');
 }
 
