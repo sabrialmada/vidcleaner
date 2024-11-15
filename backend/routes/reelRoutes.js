@@ -1767,13 +1767,32 @@ function isValidMP4Buffer(buffer) {
     return true;
 }
 
+// Add this rate limit handler
+async function handleRateLimit(page, delay = 5000) {
+    console.log(`Rate limit hit, waiting ${delay}ms before retry...`);
+    await page.waitForTimeout(delay);
+    // Clear cookies and cache
+    await page.evaluate(() => {
+        try {
+            localStorage.clear();
+            sessionStorage.clear();
+            document.cookie.split(";").forEach((c) => {
+                document.cookie = c
+                    .replace(/^ +/, "")
+                    .replace(/=.*/, `=;expires=${new Date().toUTCString()};path=/`);
+            });
+        } catch (e) {}
+    });
+}
+
 // Helper function to download video buffer with retries
 async function downloadVideoBuffer(page, videoUrl, maxAttempts = 3) {
+    let rateLimitCount = 0;
+    
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
             console.log(`Downloading video (attempt ${attempt + 1}/${maxAttempts})`);
             
-            // Get video using fetch with proper headers
             const buffer = await page.evaluate(async (url) => {
                 try {
                     const response = await fetch(url, {
@@ -1785,57 +1804,47 @@ async function downloadVideoBuffer(page, videoUrl, maxAttempts = 3) {
                             'Connection': 'keep-alive',
                             'Range': 'bytes=0-',
                             'Referer': 'https://www.instagram.com/',
+                            'Origin': 'https://www.instagram.com',
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                             'Sec-Fetch-Dest': 'video',
                             'Sec-Fetch-Mode': 'cors',
-                            'Sec-Fetch-Site': 'same-site',
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                            'Origin': 'https://www.instagram.com'
-                        },
-                        credentials: 'include',
-                        mode: 'cors'
+                            'Sec-Fetch-Site': 'same-site'
+                        }
                     });
+
+                    if (response.status === 429) {
+                        throw new Error('RATE_LIMIT');
+                    }
 
                     if (!response.ok) {
                         throw new Error(`HTTP error! status: ${response.status}`);
                     }
 
-                    const reader = response.body.getReader();
-                    const chunks = [];
-                    let totalLength = 0;
-
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        
-                        if (done) {
-                            break;
-                        }
-
-                        chunks.push(value);
-                        totalLength += value.length;
-                        console.log(`Downloaded ${totalLength} bytes`);
-                    }
-
-                    // Combine chunks
-                    const result = new Uint8Array(totalLength);
-                    let offset = 0;
-                    for (const chunk of chunks) {
-                        result.set(chunk, offset);
-                        offset += chunk.length;
-                    }
-
-                    return Array.from(result);
+                    const arrayBuffer = await response.arrayBuffer();
+                    return Array.from(new Uint8Array(arrayBuffer));
                 } catch (error) {
+                    if (error.message === 'RATE_LIMIT') {
+                        throw error;
+                    }
                     console.error('Download error:', error);
                     return null;
                 }
             }, videoUrl);
+
+            // Handle rate limiting
+            if (buffer === null) {
+                rateLimitCount++;
+                const delay = Math.min(1000 * Math.pow(2, rateLimitCount), 30000);
+                await handleRateLimit(page, delay);
+                continue;
+            }
 
             if (buffer && buffer.length > 0) {
                 const videoBuffer = Buffer.from(buffer);
                 console.log(`Downloaded buffer size: ${videoBuffer.length} bytes`);
 
                 // Basic validation
-                if (videoBuffer.length > 1000) { // At least 1KB
+                if (videoBuffer.length > 100 * 1024) { // At least 100KB
                     return videoBuffer;
                 }
             }
@@ -1844,6 +1853,13 @@ async function downloadVideoBuffer(page, videoUrl, maxAttempts = 3) {
             await delay(getBackoffDelay(attempt));
 
         } catch (error) {
+            if (error.message === 'RATE_LIMIT') {
+                rateLimitCount++;
+                const delay = Math.min(1000 * Math.pow(2, rateLimitCount), 30000);
+                await handleRateLimit(page, delay);
+                continue;
+            }
+
             console.error(`Download attempt ${attempt + 1} failed:`, error);
             if (attempt === maxAttempts - 1) throw error;
             await delay(getBackoffDelay(attempt));
@@ -2075,7 +2091,7 @@ async function downloadInstagramReel(req, res) {
 
         // Verify MP4 structure
         const fileBuffer = await fs.readFile(tempFilePath);
-        if (!isValidMP4Structure(fileBuffer)) {
+        if (!isValidMP4Buffer(fileBuffer)) {
             await fs.unlink(tempFilePath);
             throw new Error('Invalid MP4 file structure');
         }
@@ -2185,16 +2201,23 @@ async function downloadInstagramReel(req, res) {
             }
 
             console.log('Sending processed file to client');
-            res.download(outputFilePath, 'processed_reel.mp4', async (err) => {
-                if (err) {
-                    console.error('Error sending the processed file:', err);
-                }
+            const processedStats = await fs.stat(outputFilePath);
+
+            res.setHeader('Content-Type', 'video/mp4');
+            res.setHeader('Content-Disposition', `attachment; filename="processed_reel.mp4"`);
+            res.setHeader('Content-Length', processedStats.size);
+            res.setHeader('Connection', 'keep-alive');
+    
+            const fileStream = fs.createReadStream(outputFilePath);
+            fileStream.pipe(res);
+    
+            fileStream.on('end', async () => {
                 console.log('Cleaning up files after download');
                 await Promise.all([
                     fs.unlink(tempFilePath).catch(e => console.error('Error deleting temp file:', e)),
                     fs.unlink(outputFilePath).catch(e => console.error('Error deleting output file:', e))
                 ]);
-                
+        
                 if (job) {
                     try {
                         const jobInstance = await videoQueue.getJob(job.id);
@@ -2209,10 +2232,17 @@ async function downloadInstagramReel(req, res) {
             });
         } else {
             console.log('Sending original video to client without processing');
-            res.download(tempFilePath, 'reel.mp4', async (err) => {
-                if (err) {
-                    console.error('Error sending the file:', err);
-                }
+            const fileStats = await fs.stat(tempFilePath);
+            
+            res.setHeader('Content-Type', 'video/mp4');
+            res.setHeader('Content-Disposition', `attachment; filename="instagram_reel.mp4"`);
+            res.setHeader('Content-Length', fileStats.size);
+            res.setHeader('Connection', 'keep-alive');
+            
+            const fileStream = fs.createReadStream(tempFilePath);
+            fileStream.pipe(res);
+            
+            fileStream.on('end', async () => {
                 console.log('Cleaning up temporary file');
                 try {
                     await fs.unlink(tempFilePath);
