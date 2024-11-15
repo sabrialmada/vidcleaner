@@ -1396,6 +1396,7 @@ async function createBrowser() {
                 '--disable-client-side-phishing-detection',
                 '--disable-default-apps',
                 '--disable-extensions',
+                '--disable-features=site-per-process',
                 '--disable-hang-monitor',
                 '--disable-popup-blocking',
                 '--disable-prompt-on-repost',
@@ -1407,8 +1408,10 @@ async function createBrowser() {
                 '--disable-component-update',
                 '--disable-features=TranslateUI',
                 '--disable-web-security',
-                '--disable-features=IsolateOrigins,site-per-process',
-                '--blink-settings=imagesEnabled=true'
+                '--disable-features=IsolateOrigins',
+                '--blink-settings=imagesEnabled=true',
+                '--disable-features=StorageAccessAPI',
+                '--disable-blink-features=StorageAPIWorkaround'
             ],
             executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
             ignoreHTTPSErrors: true,
@@ -1426,27 +1429,38 @@ async function createBrowser() {
 async function createPage(browser) {
     try {
         const page = await browser.newPage();
-        await page.setDefaultNavigationTimeout(60000);
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-        await page.setRequestInterception(false);
-        await page.setJavaScriptEnabled(true);
-
-        // Add error and console logging
-        page.on('error', err => {
-            console.error('Page error:', err);
-        });
-
-        page.on('console', msg => {
-            console.log('Page console:', msg.text());
-        });
-
-        page.on('response', response => {
-            const status = response.status();
-            if (status >= 400) {
-                console.log(`Response status ${status} for URL: ${response.url()}`);
+        
+        // Block unnecessary resources
+        await page.setRequestInterception(true);
+        page.on('request', (request) => {
+            const resourceType = request.resourceType();
+            if (['stylesheet', 'font', 'image'].includes(resourceType)) {
+                request.abort();
+            } else {
+                request.continue();
             }
         });
+
+        // Set viewport and user agent
+        await page.setViewport({ width: 1280, height: 800 });
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
         
+        // Bypass localStorage and sessionStorage errors
+        await page.evaluateOnNewDocument(() => {
+            Object.defineProperties(window, {
+                'localStorage': {
+                    value: {},
+                    configurable: true,
+                    writable: true
+                },
+                'sessionStorage': {
+                    value: {},
+                    configurable: true,
+                    writable: true
+                }
+            });
+        });
+
         return page;
     } catch (error) {
         console.error('Error creating page:', error);
@@ -1475,110 +1489,59 @@ HTML: ${htmlPath}`);
 
 // Helper function to extract video URL with retries and rate limit handling
 async function extractVideoUrl(page, maxAttempts = 10) {
-    let rateLimitHit = false;
-    let rateLimitCount = 0;
-    
-    page.on('response', response => {
-        if (response.status() === 429) {
-            rateLimitHit = true;
-            rateLimitCount++;
-            console.log(`Rate limit hit (count: ${rateLimitCount})`);
-        }
-    });
-
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        console.log(`Attempting to extract video URL (attempt ${attempt + 1}/${maxAttempts})`);
-        
-        if (rateLimitHit) {
-            const backoffDelay = getBackoffDelay(attempt + rateLimitCount);
-            console.log(`Rate limit hit, waiting ${backoffDelay}ms before retry...`);
-            await delay(backoffDelay);
-            rateLimitHit = false;
+        try {
+            // Wait for video element with timeout
+            await page.waitForSelector('video', { timeout: 5000 });
             
-            try {
-                await page.reload({ 
-                    waitUntil: ['networkidle0', 'domcontentloaded'],
-                    timeout: 30000 
-                });
-                await delay(2000);
-            } catch (error) {
-                console.error('Error reloading page:', error);
-            }
-        }
-
-        const videoUrl = await page.evaluate(async () => {
-            // Wait for content to load
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            
-            // Video element detection with timeout
-            try {
-                await new Promise((resolve, reject) => {
-                    const checkForVideo = () => {
-                        const video = document.querySelector('video');
-                        if (video && video.src) {
-                            resolve();
-                        } else if (document.readyState === 'complete') {
-                            setTimeout(checkForVideo, 500);
-                        }
-                    };
-                    checkForVideo();
-                    setTimeout(reject, 5000);
-                });
-            } catch (e) {
-                console.log('Timeout waiting for video element');
-            }
-
-            // Try multiple selector strategies
-            const selectors = [
-                'video',
-                'video source',
-                '[role="main"] video',
-                'article video',
-                '._aatk video',
-                '._ab1d video',
-                'div[role="presentation"] video',
-                '.EmbeddedMediaVideo video',
-                '._aabd video',
-                '[data-visualcompletion="media-vc-image"] video'
-            ];
-
-            for (const selector of selectors) {
-                const element = document.querySelector(selector);
-                if (element) {
-                    if (element.tagName === 'VIDEO') {
-                        const src = element.src || element.currentSrc;
-                        if (src && src.includes('cdninstagram.com')) return src;
-                    }
-                    if (element.tagName === 'SOURCE') {
-                        const src = element.src;
-                        if (src && src.includes('cdninstagram.com')) return src;
+            const videoUrl = await page.evaluate(() => {
+                const video = document.querySelector('video');
+                if (video && video.src) {
+                    return video.src;
+                }
+                
+                // Fallback to source elements
+                const sources = document.querySelectorAll('source');
+                for (const source of sources) {
+                    if (source.src && source.src.includes('cdninstagram.com')) {
+                        return source.src;
                     }
                 }
+                
+                return null;
+            });
+
+            if (videoUrl && videoUrl.includes('cdninstagram.com')) {
+                return videoUrl;
             }
 
-            // Try finding video in network requests
-            const mediaElements = document.querySelectorAll('[src*="cdninstagram.com"]');
-            for (const element of mediaElements) {
-                if (element.src && element.src.includes('.mp4')) {
-                    return element.src;
+            // If no video found, try to find it in network requests
+            const client = await page.target().createCDPSession();
+            await client.send('Network.enable');
+            
+            const videoUrls = [];
+            client.on('Network.responseReceived', (event) => {
+                const { response } = event;
+                if (response.url.includes('cdninstagram.com') && response.url.includes('.mp4')) {
+                    videoUrls.push(response.url);
                 }
+            });
+
+            // Refresh page and wait for new requests
+            await page.reload({ waitUntil: 'networkidle0' });
+            await page.waitForTimeout(3000);
+
+            if (videoUrls.length > 0) {
+                return videoUrls[0];
             }
 
-            return null;
-        });
-
-        if (videoUrl && videoUrl.includes('cdninstagram.com')) {
-            console.log('Valid video URL found');
-            return videoUrl;
-        }
-
-        if (!rateLimitHit) {
-            console.log('Waiting before next attempt...');
-            await delay(3000);
+        } catch (error) {
+            console.error(`Attempt ${attempt + 1} failed:`, error);
+            if (attempt === maxAttempts - 1) throw error;
+            await page.waitForTimeout(2000);
         }
     }
-    
-    await saveDebugInfo(page, 'video_not_found');
+
     return null;
 }
 
