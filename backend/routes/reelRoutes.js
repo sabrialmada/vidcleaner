@@ -1921,7 +1921,7 @@ router.post('/download-reel', async (req, res) => {
         setTimeout(() => reject(new Error('Operation timed out')), 300000)
     );
 
-    try {
+    try{
         await Promise.race([downloadInstagramReel(req, res), timeoutPromise]);
     } catch (error) {
         if (error.message === 'Operation timed out') {
