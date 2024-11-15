@@ -1910,6 +1910,52 @@ async function getWorkingVideoUrl(page, videoUrl) {
     return videoUrl; // Return original URL if no variations work
 }
 
+async function handleLoginPopup(page) {
+    try {
+        // Wait for either the close button or the video element
+        await Promise.race([
+            page.waitForSelector('[aria-label="Close"]', { timeout: 5000 }),
+            page.waitForSelector('.x-closed', { timeout: 5000 }), // Alternative close button
+            page.waitForSelector('button[type="button"]', { timeout: 5000 })
+        ]);
+
+        // Try different methods to close the popup
+        await page.evaluate(() => {
+            // Try all possible close buttons
+            const selectors = [
+                '[aria-label="Close"]',
+                '.x-closed',
+                'button[type="button"]',
+                'button[class*="xy"]' // Instagram often uses this class pattern
+            ];
+
+            for (const selector of selectors) {
+                const closeButton = document.querySelector(selector);
+                if (closeButton) {
+                    closeButton.click();
+                    return true;
+                }
+            }
+
+            // If no button found, try to remove the popup directly
+            const popup = document.querySelector('div[role="presentation"]');
+            if (popup) {
+                popup.remove();
+                return true;
+            }
+
+            return false;
+        });
+
+        // Wait a bit for the popup to disappear
+        await page.waitForTimeout(1000);
+        
+        console.log('Login popup handled');
+    } catch (error) {
+        console.log('No login popup found or already closed');
+    }
+}
+
 // Main function to download Instagram Reel
 async function downloadInstagramReel(req, res) {
     console.log('Starting Instagram reel download process');
@@ -2009,14 +2055,31 @@ async function downloadInstagramReel(req, res) {
                     }
                 }).catch(() => console.log('Storage clear evaluation failed'));
                 
+                // Navigate to the URL
                 await page.goto(reelUrl, {
                     waitUntil: ['networkidle0', 'domcontentloaded'],
                     timeout: 30000
                 });
                 
+                // Handle login popup
+                await handleLoginPopup(page);
+                
+                // Additional wait to ensure content loads after popup is closed
                 await delay(2000);
-                navigationSuccess = true;
-                console.log('Navigation successful');
+        
+                // Verify video container is present
+                const hasVideoContainer = await page.evaluate(() => {
+                    return !!document.querySelector('video') || 
+                           !!document.querySelector('[role="main"]') ||
+                           !!document.querySelector('article');
+                });
+        
+                if (hasVideoContainer) {
+                    navigationSuccess = true;
+                    console.log('Navigation successful');
+                } else {
+                    throw new Error('Video container not found');
+                }
             } catch (error) {
                 console.error(`Navigation attempt ${navigationAttempt + 1} failed:`, error.message);
                 navigationAttempt++;
