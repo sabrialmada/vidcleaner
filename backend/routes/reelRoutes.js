@@ -1376,47 +1376,86 @@ const verifyFile = async (filePath) => {
 };
 
 // Browser creation helper
-async function createBrowser() {
-    try {
-        const browser = await puppeteer.launch({
-            headless: "new",
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--no-zygote',
-                '--single-process',
-                '--disable-extensions',
-                '--disable-background-networking',
-                '--disable-background-timer-throttling',
-                '--disable-backgrounding-occluded-windows',
-                '--disable-breakpad',
-                '--disable-client-side-phishing-detection',
-                '--disable-default-apps',
-                '--disable-popup-blocking',
-                '--disable-sync',
-                '--disable-translate',
-                '--metrics-recording-only',
-                '--no-first-run',
-                '--safebrowsing-disable-auto-update',
-                '--disable-features=IsolateOrigins,site-per-process'
-            ],
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-            ignoreHTTPSErrors: true,
-            timeout: 30000
-        });
+async function createBrowser(maxRetries = 3) {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            console.log(`Attempting to create browser (attempt ${attempt + 1}/${maxRetries})`);
+            
+            const browser = await puppeteer.launch({
+                headless: "new",
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--no-zygote',
+                    '--single-process',
+                    '--disable-extensions',
+                    '--disable-background-networking',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-breakpad',
+                    '--disable-client-side-phishing-detection',
+                    '--disable-default-apps',
+                    '--disable-popup-blocking',
+                    '--disable-sync',
+                    '--disable-translate',
+                    '--metrics-recording-only',
+                    '--no-first-run',
+                    '--safebrowsing-disable-auto-update',
+                    '--disable-features=IsolateOrigins,site-per-process',
+                    '--disable-features=StorageAccessAPI',
+                    '--disable-blink-features=StorageAPIWorkaround',
+                    '--disable-web-security'
+                ],
+                executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+                ignoreHTTPSErrors: true,
+                timeout: 30000,
+                pipe: true // Use pipe instead of WebSocket
+            });
 
-        // Add disconnect handler
-        browser.on('disconnected', () => {
-            console.log('Browser disconnected. This could be expected or due to an error.');
-        });
+            // Verify browser is connected
+            if (!browser.isConnected()) {
+                throw new Error('Browser disconnected immediately after launch');
+            }
 
-        return browser;
-    } catch (error) {
-        console.error('Error creating browser:', error);
-        throw error;
+            // Setup disconnection monitoring
+            let isDisconnecting = false;
+            browser._isConnected = true;
+
+            browser.on('disconnected', () => {
+                console.log('Browser disconnected event triggered');
+                browser._isConnected = false;
+                if (!isDisconnecting) {
+                    console.log('Unexpected browser disconnection');
+                }
+            });
+
+            // Add custom disconnect method
+            browser.disconnect = async () => {
+                isDisconnecting = true;
+                try {
+                    await browser.close();
+                } catch (e) {
+                    console.error('Error during browser disconnect:', e);
+                }
+                isDisconnecting = false;
+            };
+
+            // Add custom isConnected check
+            browser.isConnected = () => {
+                return browser._isConnected && !isDisconnecting;
+            };
+
+            console.log('Browser created successfully');
+            return browser;
+        } catch (error) {
+            console.error(`Browser creation attempt ${attempt + 1} failed:`, error);
+            if (attempt === maxRetries - 1) throw error;
+            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+        }
     }
+    throw new Error('Failed to create browser after all attempts');
 }
 
 // Page creation helper
@@ -1424,43 +1463,53 @@ async function createPage(browser, maxRetries = 3) {
     let retryCount = 0;
     let page = null;
 
+    const verifyBrowserConnection = async () => {
+        if (!browser.isConnected()) {
+            throw new Error('Browser is disconnected');
+        }
+        try {
+            // Test browser connection with a simple operation
+            await browser.version();
+        } catch (error) {
+            throw new Error('Browser connection test failed');
+        }
+    };
+
     while (retryCount < maxRetries) {
         try {
-            // Check if browser is still connected
-            if (!browser.isConnected()) {
-                throw new Error('Browser is disconnected');
-            }
+            await verifyBrowserConnection();
 
             console.log(`Attempting to create page (attempt ${retryCount + 1}/${maxRetries})`);
-            page = await browser.newPage();
-
-            // Basic configuration first
-            await page.setDefaultNavigationTimeout(30000);
-            await page.setViewport({ width: 1280, height: 800 });
-            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-
-            // Disable localStorage and sessionStorage errors
-            await page.evaluateOnNewDocument(() => {
-                Object.defineProperties(window, {
-                    'localStorage': {
-                        value: {},
-                        configurable: true,
-                        writable: true
-                    },
-                    'sessionStorage': {
-                        value: {},
-                        configurable: true,
-                        writable: true
-                    }
-                });
+            page = await browser.newPage().catch(async (error) => {
+                console.error('Error in newPage():', error);
+                await verifyBrowserConnection();
+                throw error;
             });
 
-            // Instead of using request interception, use a more basic approach
+            // Immediately verify the page is usable
+            await page.evaluate(() => true).catch(error => {
+                throw new Error('Page verification failed: ' + error.message);
+            });
+
+            // Basic configuration
+            await Promise.all([
+                page.setDefaultNavigationTimeout(30000),
+                page.setViewport({ width: 1280, height: 800 }),
+                page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+            ]).catch(error => {
+                throw new Error('Page configuration failed: ' + error.message);
+            });
+
+            // Set up error handling
+            page.on('error', err => console.error('Page error:', err));
+            page.on('pageerror', err => console.error('Page error:', err));
+
+            // Minimal request interception
             await page.setRequestInterception(true).catch(() => {
                 console.log('Request interception setup failed, continuing without it');
             });
 
-            if (page.on) {  // Check if page event binding is available
+            if (page.on) {
                 page.on('request', (request) => {
                     try {
                         const resourceType = request.resourceType();
@@ -1473,20 +1522,13 @@ async function createPage(browser, maxRetries = 3) {
                         request.continue().catch(() => {});
                     }
                 });
-
-                // Add error logging
-                page.on('error', err => console.error('Page error:', err));
-                page.on('pageerror', err => console.error('Page error:', err));
-                page.on('console', msg => {
-                    if (msg.type() === 'error') {
-                        console.log('Page console error:', msg.text());
-                    }
-                });
             }
 
+            console.log('Page created and configured successfully');
             return page;
         } catch (error) {
             console.error(`Failed to create page (attempt ${retryCount + 1}):`, error);
+            
             if (page) {
                 try {
                     await page.close().catch(() => {});
@@ -1500,8 +1542,8 @@ async function createPage(browser, maxRetries = 3) {
                 throw new Error(`Failed to create page after ${maxRetries} attempts`);
             }
             
-            // Wait before retry
-            await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+            // Exponential backoff
+            await new Promise(resolve => setTimeout(resolve, Math.min(1000 * Math.pow(2, retryCount), 5000)));
         }
     }
 }
@@ -1745,7 +1787,9 @@ async function downloadInstagramReel(req, res) {
         // Add disconnect handler with reconnection logic
         browser.on('disconnected', async () => {
             console.log('Browser was disconnected');
-            if (!browser.isConnected() && !res.headersSent) {
+            if (browserReconnectAttempts < maxBrowserReconnectAttempts && !res.headersSent) {
+                browserReconnectAttempts++;
+                console.log(`Attempting browser reconnection (${browserReconnectAttempts}/${maxBrowserReconnectAttempts})`);
                 try {
                     browser = await createBrowser();
                     console.log('Browser reconnected successfully');
@@ -1758,7 +1802,7 @@ async function downloadInstagramReel(req, res) {
         // Create page with retry logic
         let pageCreated = false;
         let pageAttempt = 0;
-        const maxPageAttempts = 3;
+        const maxPageAttempts = 2;
 
         while (!pageCreated && pageAttempt < maxPageAttempts) {
             try {
