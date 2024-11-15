@@ -1376,7 +1376,9 @@ const verifyFile = async (filePath) => {
 };
 
 // Browser creation helper
-async function createBrowser(maxRetries = 3) {
+async function createBrowser(options = {}) {
+    const { maxRetries = 3, onDisconnect } = options;
+    
     for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
             console.log(`Attempting to create browser (attempt ${attempt + 1}/${maxRetries})`);
@@ -1411,41 +1413,13 @@ async function createBrowser(maxRetries = 3) {
                 executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
                 ignoreHTTPSErrors: true,
                 timeout: 30000,
-                pipe: true // Use pipe instead of WebSocket
+                pipe: true
             });
 
-            // Verify browser is connected
-            if (!browser.isConnected()) {
-                throw new Error('Browser disconnected immediately after launch');
+            // Set up disconnection handler if provided
+            if (onDisconnect) {
+                browser.on('disconnected', onDisconnect);
             }
-
-            // Setup disconnection monitoring
-            let isDisconnecting = false;
-            browser._isConnected = true;
-
-            browser.on('disconnected', () => {
-                console.log('Browser disconnected event triggered');
-                browser._isConnected = false;
-                if (!isDisconnecting) {
-                    console.log('Unexpected browser disconnection');
-                }
-            });
-
-            // Add custom disconnect method
-            browser.disconnect = async () => {
-                isDisconnecting = true;
-                try {
-                    await browser.close();
-                } catch (e) {
-                    console.error('Error during browser disconnect:', e);
-                }
-                isDisconnecting = false;
-            };
-
-            // Add custom isConnected check
-            browser.isConnected = () => {
-                return browser._isConnected && !isDisconnecting;
-            };
 
             console.log('Browser created successfully');
             return browser;
@@ -1778,26 +1752,43 @@ async function downloadInstagramReel(req, res) {
     let tempFilePath = null;
     let outputFilePath = null;
     let job = null;
+    let browserReconnectAttempts = 0;
+    const maxBrowserReconnectAttempts = 2;
+    let isDownloadComplete = false;
 
     try {
-        console.log('Initializing browser...');
-        browser = await createBrowser();
-        console.log('Browser created successfully');
+        // Initialize browser with proper disconnect handling
+        const initializeBrowser = async () => {
+            try {
+                browser = await createBrowser();
+                
+                // Set up disconnect handler that won't cause unhandled rejections
+                const handleDisconnect = async () => {
+                    console.log('Browser was disconnected');
+                    if (!isDownloadComplete && !res.headersSent && 
+                        browserReconnectAttempts < maxBrowserReconnectAttempts) {
+                        browserReconnectAttempts++;
+                        console.log(`Attempting browser reconnection (${browserReconnectAttempts}/${maxBrowserReconnectAttempts})`);
+                        try {
+                            await initializeBrowser();
+                        } catch (error) {
+                            console.error('Failed to reconnect browser:', error);
+                        }
+                    } else {
+                        console.log('Skipping browser reconnection - download complete or max attempts reached');
+                    }
+                };
 
-        // Add disconnect handler with reconnection logic
-        browser.on('disconnected', async () => {
-            console.log('Browser was disconnected');
-            if (browserReconnectAttempts < maxBrowserReconnectAttempts && !res.headersSent) {
-                browserReconnectAttempts++;
-                console.log(`Attempting browser reconnection (${browserReconnectAttempts}/${maxBrowserReconnectAttempts})`);
-                try {
-                    browser = await createBrowser();
-                    console.log('Browser reconnected successfully');
-                } catch (error) {
-                    console.error('Failed to reconnect browser:', error);
-                }
+                browser.on('disconnected', handleDisconnect);
+                return browser;
+            } catch (error) {
+                throw new Error(`Failed to initialize browser: ${error.message}`);
             }
-        });
+        };
+
+        console.log('Initializing browser...');
+        browser = await initializeBrowser();
+        console.log('Browser created successfully');
 
         // Create page with retry logic
         let pageCreated = false;
@@ -1807,6 +1798,9 @@ async function downloadInstagramReel(req, res) {
         while (!pageCreated && pageAttempt < maxPageAttempts) {
             try {
                 console.log(`Creating page attempt ${pageAttempt + 1}/${maxPageAttempts}...`);
+                if (!browser.isConnected()) {
+                    throw new Error('Browser disconnected during page creation');
+                }
                 page = await createPage(browser);
                 pageCreated = true;
                 console.log('Page created successfully');
@@ -1914,6 +1908,9 @@ async function downloadInstagramReel(req, res) {
         if (fileStats.size === 0) {
             throw new Error('Downloaded file is empty');
         }
+
+        // Set flag before sending response
+        isDownloadComplete = true;
 
         if (cleanMetadata) {
             console.log('Cleaning metadata requested, processing video');
@@ -2087,7 +2084,9 @@ async function downloadInstagramReel(req, res) {
         if (page) {
             try {
                 console.log('Closing page...');
-                await page.close().catch(e => console.error('Error closing page:', e));
+                if (!page.isClosed()) {
+                    await page.close().catch(e => console.error('Error closing page:', e));
+                }
                 console.log('Page closed successfully');
             } catch (error) {
                 console.error('Error during page cleanup:', error);
@@ -2097,7 +2096,11 @@ async function downloadInstagramReel(req, res) {
         if (browser) {
             try {
                 console.log('Closing browser...');
-                await browser.close().catch(e => console.error('Error closing browser:', e));
+                // Remove all listeners before closing to prevent disconnect events
+                browser.removeAllListeners('disconnected');
+                if (browser.isConnected()) {
+                    await browser.close().catch(e => console.error('Error closing browser:', e));
+                }
                 console.log('Browser closed successfully');
             } catch (error) {
                 console.error('Error during browser cleanup:', error);
