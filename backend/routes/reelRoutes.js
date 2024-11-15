@@ -1769,72 +1769,129 @@ function isValidMP4Buffer(buffer) {
 
 // Helper function to download video buffer with retries
 async function downloadVideoBuffer(page, videoUrl, maxAttempts = 3) {
-    const expectedSize = await page.evaluate(async (url) => {
-        try {
-            const response = await fetch(url, { method: 'HEAD' });
-            return parseInt(response.headers.get('content-length') || '0');
-        } catch (error) {
-            return 0;
-        }
-    }, videoUrl);
-
-    console.log(`Expected video size: ${expectedSize} bytes`);
-
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
             console.log(`Downloading video (attempt ${attempt + 1}/${maxAttempts})`);
             
-            // Download using XMLHttpRequest for better progress tracking and reliability
+            // Get video using fetch with proper headers
             const buffer = await page.evaluate(async (url) => {
-                return new Promise((resolve, reject) => {
-                    const xhr = new XMLHttpRequest();
-                    xhr.open('GET', url, true);
-                    xhr.responseType = 'arraybuffer';
-                    
-                    xhr.onload = function() {
-                        if (this.status === 200) {
-                            const buffer = this.response;
-                            resolve(new Uint8Array(buffer));
-                        } else {
-                            reject(new Error(`HTTP ${this.status}`));
+                try {
+                    const response = await fetch(url, {
+                        method: 'GET',
+                        headers: {
+                            'Accept': '*/*',
+                            'Accept-Encoding': 'gzip, deflate, br',
+                            'Accept-Language': 'en-US,en;q=0.9',
+                            'Connection': 'keep-alive',
+                            'Range': 'bytes=0-',
+                            'Referer': 'https://www.instagram.com/',
+                            'Sec-Fetch-Dest': 'video',
+                            'Sec-Fetch-Mode': 'cors',
+                            'Sec-Fetch-Site': 'same-site',
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                            'Origin': 'https://www.instagram.com'
+                        },
+                        credentials: 'include',
+                        mode: 'cors'
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    const reader = response.body.getReader();
+                    const chunks = [];
+                    let totalLength = 0;
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        
+                        if (done) {
+                            break;
                         }
-                    };
-                    
-                    xhr.onerror = () => reject(new Error('Network error'));
-                    xhr.onprogress = (event) => {
-                        if (event.lengthComputable) {
-                            const percent = (event.loaded / event.total) * 100;
-                            console.log(`Download progress: ${percent.toFixed(2)}%`);
-                        }
-                    };
-                    
-                    xhr.send();
-                });
+
+                        chunks.push(value);
+                        totalLength += value.length;
+                        console.log(`Downloaded ${totalLength} bytes`);
+                    }
+
+                    // Combine chunks
+                    const result = new Uint8Array(totalLength);
+                    let offset = 0;
+                    for (const chunk of chunks) {
+                        result.set(chunk, offset);
+                        offset += chunk.length;
+                    }
+
+                    return Array.from(result);
+                } catch (error) {
+                    console.error('Download error:', error);
+                    return null;
+                }
             }, videoUrl);
 
             if (buffer && buffer.length > 0) {
                 const videoBuffer = Buffer.from(buffer);
-                
-                // Check size
-                if (expectedSize > 0 && Math.abs(videoBuffer.length - expectedSize) > 100) {
-                    throw new Error('Incomplete download - size mismatch');
-                }
+                console.log(`Downloaded buffer size: ${videoBuffer.length} bytes`);
 
-                // Verify MP4 structure
-                if (isValidMP4Structure(videoBuffer)) {
-                    console.log(`Successfully downloaded video (${videoBuffer.length} bytes)`);
+                // Basic validation
+                if (videoBuffer.length > 1000) { // At least 1KB
                     return videoBuffer;
                 }
-                throw new Error('Invalid MP4 file structure');
             }
-            throw new Error('Empty buffer received');
+
+            console.log('Invalid buffer received, retrying...');
+            await delay(getBackoffDelay(attempt));
+
         } catch (error) {
             console.error(`Download attempt ${attempt + 1} failed:`, error);
             if (attempt === maxAttempts - 1) throw error;
             await delay(getBackoffDelay(attempt));
         }
     }
+
     throw new Error('Failed to download video after all attempts');
+}
+
+// Add this function to check video URL and get alternative format if needed
+async function getWorkingVideoUrl(page, videoUrl) {
+    // Try different URL variations
+    const urlVariations = [
+        videoUrl,
+        videoUrl.replace('_dashinit', ''),
+        videoUrl.split('?')[0],
+        videoUrl.replace('/o1/', '/v/').split('?')[0]
+    ];
+
+    for (const url of urlVariations) {
+        try {
+            const response = await page.evaluate(async (testUrl) => {
+                const resp = await fetch(testUrl, {
+                    method: 'HEAD',
+                    headers: {
+                        'Accept': '*/*',
+                        'Referer': 'https://www.instagram.com/',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    }
+                });
+                return {
+                    ok: resp.ok,
+                    status: resp.status,
+                    contentType: resp.headers.get('content-type'),
+                    contentLength: resp.headers.get('content-length')
+                };
+            });
+
+            if (response.ok && response.contentType?.includes('video')) {
+                console.log(`Found working video URL: ${url}`);
+                return url;
+            }
+        } catch (error) {
+            console.error(`Error checking URL variation: ${error.message}`);
+        }
+    }
+
+    return videoUrl; // Return original URL if no variations work
 }
 
 // Main function to download Instagram Reel
@@ -1972,14 +2029,17 @@ async function downloadInstagramReel(req, res) {
             await saveDebugInfo(page, 'video_extraction_failed');
             return null;
         });
-
+        
         if (!videoUrl) {
             await saveDebugInfo(page, 'no_video_found');
             return res.status(400).json({ 
                 message: 'Unable to find the video. The reel might be private or unavailable.' 
             });
         }
-        console.log(`Video URL found: ${videoUrl}`);
+
+        // Get working video URL
+        const workingVideoUrl = await getWorkingVideoUrl(page, videoUrl);
+        console.log(`Using video URL: ${workingVideoUrl}`);
 
         // Download video with retry logic
         let downloadAttempt = 0;
@@ -1988,7 +2048,7 @@ async function downloadInstagramReel(req, res) {
 
         while (downloadAttempt < maxDownloadAttempts && !buffer) {
             try {
-                buffer = await downloadVideoBuffer(page, videoUrl);
+                buffer = await downloadVideoBuffer(page, workingVideoUrl);
                 if (!buffer || buffer.length === 0) {
                     throw new Error('Empty buffer received');
                 }
