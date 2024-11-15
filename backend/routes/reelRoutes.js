@@ -1452,6 +1452,22 @@ async function createBrowser(options = {}) {
     throw new Error('Failed to create browser after all attempts');
 }
 
+const getContentLength = async (url) => {
+    try {
+        const response = await fetch(url, {
+            method: 'HEAD',
+            headers: {
+                'Accept': 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+        });
+        return parseInt(response.headers.get('content-length') || '0');
+    } catch (error) {
+        console.error('Error getting content length:', error);
+        return 0;
+    }
+};
+
 // Page creation helper
 async function createPage(browser, maxRetries = 3) {
     let retryCount = 0;
@@ -1753,41 +1769,59 @@ function isValidMP4Buffer(buffer) {
 
 // Helper function to download video buffer with retries
 async function downloadVideoBuffer(page, videoUrl, maxAttempts = 3) {
+    const expectedSize = await page.evaluate(async (url) => {
+        try {
+            const response = await fetch(url, { method: 'HEAD' });
+            return parseInt(response.headers.get('content-length') || '0');
+        } catch (error) {
+            return 0;
+        }
+    }, videoUrl);
+
+    console.log(`Expected video size: ${expectedSize} bytes`);
+
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
             console.log(`Downloading video (attempt ${attempt + 1}/${maxAttempts})`);
             
+            // Download using XMLHttpRequest for better progress tracking and reliability
             const buffer = await page.evaluate(async (url) => {
-                try {
-                    const response = await fetch(url, {
-                        headers: {
-                            'Accept': 'video/mp4,video/*;q=0.9,*/*;q=0.8',
-                            'Range': 'bytes=0-',
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                return new Promise((resolve, reject) => {
+                    const xhr = new XMLHttpRequest();
+                    xhr.open('GET', url, true);
+                    xhr.responseType = 'arraybuffer';
+                    
+                    xhr.onload = function() {
+                        if (this.status === 200) {
+                            const buffer = this.response;
+                            resolve(new Uint8Array(buffer));
+                        } else {
+                            reject(new Error(`HTTP ${this.status}`));
                         }
-                    });
+                    };
                     
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
+                    xhr.onerror = () => reject(new Error('Network error'));
+                    xhr.onprogress = (event) => {
+                        if (event.lengthComputable) {
+                            const percent = (event.loaded / event.total) * 100;
+                            console.log(`Download progress: ${percent.toFixed(2)}%`);
+                        }
+                    };
                     
-                    // Verify content type
-                    const contentType = response.headers.get('content-type');
-                    if (!contentType?.includes('video/')) {
-                        throw new Error(`Invalid content type: ${contentType}`);
-                    }
-                    
-                    const arrayBuffer = await response.arrayBuffer();
-                    return Array.from(new Uint8Array(arrayBuffer));
-                } catch (error) {
-                    console.error('Download error:', error);
-                    return null;
-                }
+                    xhr.send();
+                });
             }, videoUrl);
 
             if (buffer && buffer.length > 0) {
                 const videoBuffer = Buffer.from(buffer);
-                if (isValidMP4Buffer(videoBuffer)) {
+                
+                // Check size
+                if (expectedSize > 0 && Math.abs(videoBuffer.length - expectedSize) > 100) {
+                    throw new Error('Incomplete download - size mismatch');
+                }
+
+                // Verify MP4 structure
+                if (isValidMP4Structure(videoBuffer)) {
                     console.log(`Successfully downloaded video (${videoBuffer.length} bytes)`);
                     return videoBuffer;
                 }
@@ -1976,6 +2010,13 @@ async function downloadInstagramReel(req, res) {
         const fileStats = await fs.stat(tempFilePath);
         if (fileStats.size === 0) {
             throw new Error('Downloaded file is empty');
+        }
+
+        // Verify MP4 structure
+        const fileBuffer = await fs.readFile(tempFilePath);
+        if (!isValidMP4Structure(fileBuffer)) {
+            await fs.unlink(tempFilePath);
+            throw new Error('Invalid MP4 file structure');
         }
 
         // Set flag before sending response
