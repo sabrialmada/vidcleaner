@@ -1542,148 +1542,50 @@ HTML: ${htmlPath}`);
 }
 
 // Helper function to extract video URL with retries and rate limit handling
-async function extractVideoUrl(page, maxAttempts = 10) {
-    let videoUrls = [];
+async function extractVideoUrl(page, maxAttempts = 5) {
+    // Store found videos with their quality info
+    const videoUrls = new Map();
     
-    // Set up CDP session for network monitoring first
+    // Set up network monitoring
     const client = await page.target().createCDPSession();
     await client.send('Network.enable');
     
     client.on('Network.responseReceived', (event) => {
         const { response } = event;
-        if (response.url.includes('cdninstagram.com') && 
-            (response.url.includes('.mp4') || response.mimeType === 'video/mp4')) {
-            console.log('Found video URL in network request:', response.url);
-            videoUrls.push(response.url);
+        if (response.url.includes('cdninstagram.com') && response.url.includes('.mp4')) {
+            // Check if it's a video stream (not audio)
+            if (!response.url.includes('_audio')) {
+                // Get resolution from URL or default to 0
+                const quality = response.url.includes('q90') ? 90 :
+                              response.url.includes('q60') ? 60 :
+                              response.url.includes('q30') ? 30 : 0;
+                              
+                videoUrls.set(quality, response.url);
+                console.log(`Found video URL (quality: ${quality}):`, response.url);
+            }
         }
     });
 
+    // Wait for navigation and video detection
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
-            console.log(`Video extraction attempt ${attempt + 1}/${maxAttempts}`);
-
-            // First check network requests from previous attempts
-            if (videoUrls.length > 0) {
-                console.log('Found video URL from network monitoring');
-                return videoUrls[0];
+            if (videoUrls.size > 0) {
+                // Get highest quality video
+                const highestQuality = Math.max(...videoUrls.keys());
+                return videoUrls.get(highestQuality);
             }
 
-            // Try multiple approaches in parallel
-            const results = await Promise.allSettled([
-                // Approach 1: Direct video element
-                page.evaluate(() => {
-                    const video = document.querySelector('video');
-                    return video ? video.src || video.currentSrc : null;
-                }),
-
-                // Approach 2: Multiple selectors
-                page.evaluate(() => {
-                    const selectors = [
-                        'video',
-                        'video source',
-                        '[role="main"] video',
-                        'article video',
-                        '._aatk video',
-                        '._ab1d video',
-                        'div[role="presentation"] video',
-                        '.EmbeddedMediaVideo video',
-                        '._aabd video',
-                        '[data-visualcompletion="media-vc-image"] video'
-                    ];
-
-                    for (const selector of selectors) {
-                        const element = document.querySelector(selector);
-                        if (element?.tagName === 'VIDEO') {
-                            return element.src || element.currentSrc;
-                        }
-                    }
-                    return null;
-                }),
-
-                // Approach 3: Source elements
-                page.evaluate(() => {
-                    const sources = document.querySelectorAll('source[type="video/mp4"], source[src*=".mp4"]');
-                    for (const source of sources) {
-                        if (source.src) return source.src;
-                    }
-                    return null;
-                }),
-
-                // Approach 4: Media elements
-                page.evaluate(() => {
-                    const mediaElements = document.querySelectorAll('[src*="cdninstagram.com"]');
-                    for (const element of mediaElements) {
-                        if (element.src?.includes('.mp4')) return element.src;
-                    }
-                    return null;
-                }),
-
-                // Approach 5: Check for video in shadow DOM
-                page.evaluate(() => {
-                    function searchShadowDOM(root) {
-                        if (!root) return null;
-                        
-                        // Check regular children
-                        const videos = root.querySelectorAll('video');
-                        for (const video of videos) {
-                            if (video.src) return video.src;
-                        }
-
-                        // Check shadow roots
-                        const elements = root.querySelectorAll('*');
-                        for (const element of elements) {
-                            if (element.shadowRoot) {
-                                const result = searchShadowDOM(element.shadowRoot);
-                                if (result) return result;
-                            }
-                        }
-                        return null;
-                    }
-                    return searchShadowDOM(document);
-                })
-            ]);
-
-            // Process results from all approaches
-            for (const result of results) {
-                if (result.status === 'fulfilled' && result.value) {
-                    const url = result.value;
-                    if (url && url.includes('cdninstagram.com')) {
-                        console.log('Found video URL through DOM inspection');
-                        return url;
-                    }
-                }
-            }
-
-            // If no video found, try waiting and refreshing
-            console.log('No video found, waiting before retry...');
+            // Wait a bit and refresh if needed
             await page.waitForTimeout(2000);
-
             if (attempt < maxAttempts - 1) {
-                console.log('Refreshing page...');
-                await page.reload({ 
-                    waitUntil: ['networkidle0', 'domcontentloaded'],
-                    timeout: 30000 
-                });
-                await page.waitForTimeout(2000);
+                await page.reload({ waitUntil: 'networkidle0' });
             }
-
         } catch (error) {
             console.error(`Attempt ${attempt + 1} failed:`, error);
-            if (attempt === maxAttempts - 1) {
-                console.error('All video extraction attempts failed');
-                throw error;
-            }
-            await page.waitForTimeout(2000);
+            if (attempt === maxAttempts - 1) throw error;
         }
     }
 
-    // If we got here, check network requests one last time
-    if (videoUrls.length > 0) {
-        return videoUrls[0];
-    }
-
-    console.log('No video URL found after all attempts');
-    await saveDebugInfo(page, 'video_extraction_failed');
     return null;
 }
 
@@ -1691,14 +1593,17 @@ async function extractVideoUrl(page, maxAttempts = 10) {
 async function downloadVideoBuffer(page, videoUrl, maxAttempts = 3) {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
-            console.log(`Downloading video buffer (attempt ${attempt + 1}/${maxAttempts})`);
+            console.log(`Downloading video (attempt ${attempt + 1}/${maxAttempts})`);
+            
+            // Remove any byte range parameters
+            const cleanUrl = videoUrl.split('&bytestart')[0];
+            
             const buffer = await page.evaluate(async (url) => {
                 try {
                     const response = await fetch(url, {
                         headers: {
                             'Accept': 'video/mp4,video/*;q=0.9,*/*;q=0.8',
-                            'Range': 'bytes=0-',
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                         }
                     });
                     
@@ -1707,23 +1612,24 @@ async function downloadVideoBuffer(page, videoUrl, maxAttempts = 3) {
                     }
                     
                     const buffer = await response.arrayBuffer();
-                    if (buffer.byteLength === 0) {
-                        throw new Error('Empty buffer received');
-                    }
-                    
                     return Array.from(new Uint8Array(buffer));
                 } catch (error) {
-                    console.error('Error downloading video:', error);
+                    console.error('Download error:', error);
                     return null;
                 }
-            }, videoUrl);
+            }, cleanUrl);
 
             if (buffer && buffer.length > 0) {
-                return Buffer.from(buffer);
+                const videoBuffer = Buffer.from(buffer);
+                // Verify it's a valid MP4
+                if (videoBuffer.length > 8 && 
+                    videoBuffer.slice(4, 8).toString() === 'ftyp') {
+                    return videoBuffer;
+                }
+                throw new Error('Invalid MP4 file received');
             }
 
-            console.log('Invalid buffer received, retrying...');
-            await delay(getBackoffDelay(attempt));
+            throw new Error('Empty or invalid buffer received');
         } catch (error) {
             console.error(`Download attempt ${attempt + 1} failed:`, error);
             if (attempt === maxAttempts - 1) throw error;
