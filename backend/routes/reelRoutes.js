@@ -1347,6 +1347,7 @@ const express = require('express');
 const puppeteer = require('puppeteer');
 const path = require('path');
 const fs = require('fs').promises;
+const fsSync = require('fs');
 const { processVideo } = require('../videoProcessor');
 const { videoQueue } = require('../queue');
 
@@ -1473,6 +1474,33 @@ const getContentLength = async (url) => {
         return 0;
     }
 };
+
+// Add this function near the top of your file
+async function waitForContent(page, timeout = 10000) {
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < timeout) {
+        const content = await page.evaluate(() => {
+            // Check for video element
+            const video = document.querySelector('video');
+            if (video) return true;
+            
+            // Check for error messages
+            const errorTexts = ['Sorry, this page is not available.', 'Please wait a few minutes'];
+            for (const text of errorTexts) {
+                if (document.body.innerText.includes(text)) return false;
+            }
+            
+            return null; // Still loading
+        });
+        
+        if (content === true) return true;
+        if (content === false) return false;
+        await page.waitForTimeout(1000);
+    }
+    
+    return false;
+}
 
 // Page creation helper
 async function createPage(browser, maxRetries = 3) {
@@ -2061,30 +2089,27 @@ async function downloadInstagramReel(req, res) {
                     }
                 }).catch(() => console.log('Storage clear evaluation failed'));
                 
-                // Navigate to the URL
+                // Navigate to the URL with longer timeout
                 await page.goto(reelUrl, {
                     waitUntil: ['networkidle0', 'domcontentloaded'],
-                    timeout: 30000
+                    timeout: 60000 // Increased timeout
                 });
                 
                 // Handle login popup
                 await handleLoginPopup(page);
                 
-                // Additional wait to ensure content loads after popup is closed
-                await delay(2000);
-        
-                // Verify video container is present
-                const hasVideoContainer = await page.evaluate(() => {
-                    return !!document.querySelector('video') || 
-                           !!document.querySelector('[role="main"]') ||
-                           !!document.querySelector('article');
-                });
-        
-                if (hasVideoContainer) {
+                // Wait longer for content to load
+                await page.waitForTimeout(5000);
+                
+                // Wait for content with verification
+                const contentLoaded = await waitForContent(page);
+                if (contentLoaded) {
                     navigationSuccess = true;
                     console.log('Navigation successful');
+                    // Add extra delay before proceeding
+                    await page.waitForTimeout(3000);
                 } else {
-                    throw new Error('Video container not found');
+                    throw new Error('Content not loaded properly');
                 }
             } catch (error) {
                 console.error(`Navigation attempt ${navigationAttempt + 1} failed:`, error.message);
@@ -2277,7 +2302,7 @@ async function downloadInstagramReel(req, res) {
             res.setHeader('Content-Length', processedStats.size);
             res.setHeader('Connection', 'keep-alive');
     
-            const fileStream = fs.createReadStream(outputFilePath);
+            const fileStream = fsSync.createReadStream(outputFilePath);
             fileStream.pipe(res);
     
             fileStream.on('end', async () => {
@@ -2308,7 +2333,7 @@ async function downloadInstagramReel(req, res) {
             res.setHeader('Content-Length', fileStats.size);
             res.setHeader('Connection', 'keep-alive');
             
-            const fileStream = fs.createReadStream(tempFilePath);
+            const fileStream = fsSync.createReadStream(tempFilePath);
             fileStream.pipe(res);
             
             fileStream.on('end', async () => {
