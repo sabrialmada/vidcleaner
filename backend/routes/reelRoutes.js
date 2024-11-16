@@ -1413,7 +1413,13 @@ async function createBrowser(options = {}) {
                     '--disable-blink-features',
                     '--disable-infobars',
                     '--window-size=1920,1080',
-                    '--start-maximized'
+                    '--start-maximized',
+                    '--disable-features=IsolateOrigins',
+                    '--disable-site-isolation-trials',
+                    '--disable-blink-features=AutomatingControlled',
+                    '--disable-blink-features',
+                    '--disable-web-security',
+                    '--user-data-dir=/tmp/chrome-data'
                 ],
                 executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
                 ignoreHTTPSErrors: true,
