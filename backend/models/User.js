@@ -137,7 +137,7 @@ const UserSchema = new mongoose.Schema({
   },
   subscriptionAmount: {
     type: Number,
-    default: 49.00
+    default: 29.00
   }
 }, {
   timestamps: true

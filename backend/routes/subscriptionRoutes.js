@@ -477,7 +477,7 @@ async function updateUserSubscription(user, subscription) {
   user.subscriptionEndDate = new Date(subscription.current_period_end * 1000);
   user.subscriptionStartDate = new Date();
   user.subscriptionPlan = 'Monthly';
-  user.subscriptionAmount = 49.00;
+  user.subscriptionAmount = 29.00;
   await user.save();
 }
 

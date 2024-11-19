@@ -230,7 +230,7 @@ const Subscription = () => {
     <div className="subscription-container">
       <div className="subscription-card">
         <h2>Subscribe to VidCleaner</h2>
-        <p className="price">$49<span>/month</span></p>
+        <p className="price">$29<span>/month</span></p>
         <Elements stripe={stripePromise}>
           <CheckoutForm />
         </Elements>

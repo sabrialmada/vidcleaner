@@ -1356,6 +1356,7 @@ const router = express.Router();
 // Utility functions
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+
 const getBackoffDelay = (attempt) => {
     return Math.min(1000 * Math.pow(2, attempt), 30000);
 };
@@ -1377,86 +1378,26 @@ const verifyFile = async (filePath) => {
 };
 
 // Browser creation helper
-async function createBrowser(options = {}) {
-    const { maxRetries = 3, onDisconnect } = options;
-    
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-            console.log(`Attempting to create browser (attempt ${attempt + 1}/${maxRetries})`);
-            
-            const browser = await puppeteer.launch({
-                headless: "new",
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu',
-                    '--no-zygote',
-                    '--single-process',
-                    '--disable-extensions',
-                    '--disable-background-networking',
-                    '--disable-background-timer-throttling',
-                    '--disable-backgrounding-occluded-windows',
-                    '--disable-breakpad',
-                    '--disable-client-side-phishing-detection',
-                    '--disable-default-apps',
-                    '--disable-popup-blocking',
-                    '--disable-sync',
-                    '--disable-translate',
-                    '--metrics-recording-only',
-                    '--no-first-run',
-                    '--safebrowsing-disable-auto-update',
-                    '--disable-features=IsolateOrigins,site-per-process',
-                    '--disable-features=StorageAccessAPI',
-                    '--disable-blink-features=StorageAPIWorkaround',
-                    '--disable-web-security',
-                    '--ignore-certificate-errors',
-                    '--disable-blink-features',
-                    '--disable-infobars',
-                    '--window-size=1920,1080',
-                    '--start-maximized',
-                    '--disable-features=IsolateOrigins',
-                    '--disable-site-isolation-trials',
-                    '--disable-blink-features=AutomatingControlled',
-                    '--disable-blink-features',
-                    '--disable-web-security',
-                    '--user-data-dir=/tmp/chrome-data'
-                ],
-                executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-                ignoreHTTPSErrors: true,
-                timeout: 60000,
-                pipe: true,
-                defaultViewport: {
-                    width: 1920,
-                    height: 1080
-                }
-            });
-
-            // Set up disconnect handling
-            if (onDisconnect) {
-                const disconnectHandler = async () => {
-                    console.log('Browser disconnected event triggered');
-                    browser._isConnected = false;
-                    await onDisconnect();
-                };
-                browser.on('disconnected', disconnectHandler);
-            }
-
-            // Additional connection verification
-            const pages = await browser.pages();
-            if (!pages || pages.length === 0) {
-                throw new Error('Browser created but no pages available');
-            }
-
-            console.log('Browser created successfully');
-            return browser;
-        } catch (error) {
-            console.error(`Browser creation attempt ${attempt + 1} failed:`, error);
-            if (attempt === maxRetries - 1) throw error;
-            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
-        }
-    }
-    throw new Error('Failed to create browser after all attempts');
+// Simplified browser creation
+async function createBrowser() {
+    return await puppeteer.launch({
+        headless: "new",
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-web-security',
+            '--disable-features=IsolateOrigins',
+            '--disable-site-isolation-trials',
+            '--ignore-certificate-errors',
+            '--disable-features=site-per-process',
+            '--window-size=1920,1080',
+            '--user-data-dir=/tmp/chrome-data'
+        ],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+        ignoreHTTPSErrors: true,
+        timeout: 60000,
+    });
 }
 
 const getContentLength = async (url) => {
@@ -1503,85 +1444,103 @@ async function waitForContent(page, timeout = 10000) {
 }
 
 // Page creation helper
-async function createPage(browser, maxRetries = 3) {
-    let retryCount = 0;
-    let page = null;
+async function createPage(browser) {
+    const page = await browser.newPage();
+    
+    await Promise.all([
+        page.setViewport({ width: 1920, height: 1080 }),
+        page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'),
+        page.setExtraHTTPHeaders({
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
+        })
+    ]);
 
-    while (retryCount < maxRetries) {
+    // Only block unwanted resources
+    await page.setRequestInterception(true);
+    page.on('request', req => {
+        if (['image', 'stylesheet', 'font'].includes(req.resourceType())) {
+            req.abort();
+        } else {
+            req.continue();
+        }
+    });
+
+    return page;
+}
+
+// Improved navigation with popup handling
+async function navigateToReel(page, url, maxAttempts = 3) {
+    let lastError;
+    
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
-            // Verify browser connection
-            if (!browser.isConnected()) {
-                throw new Error('Browser is disconnected');
-            }
+            // Clear storage and cookies
+            await page.evaluate(() => {
+                try {
+                    localStorage.clear();
+                    sessionStorage.clear();
+                    document.cookie.split(";").forEach(c => {
+                        document.cookie = c.replace(/^ +/, "")
+                            .replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
+                    });
+                } catch (e) {}
+            });
 
-            console.log(`Creating page (attempt ${retryCount + 1}/${maxRetries})`);
-            page = await browser.newPage();
+            // Navigate to page
+            await page.goto(url, { 
+                waitUntil: 'networkidle0',
+                timeout: 60000
+            });
 
-            // Configure page settings
-            await Promise.all([
-                page.setDefaultNavigationTimeout(60000),
-                page.setDefaultTimeout(60000),
-                page.setViewport({
-                    width: 1920,
-                    height: 1080,
-                    deviceScaleFactor: 1,
-                }),
-                page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.84 Safari/537.36'),
-                page.setExtraHTTPHeaders({
-                    'Accept-Language': 'en-US,en;q=0.9',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Connection': 'keep-alive'
+            // Handle login popup
+            try {
+                await page.waitForSelector('[role="dialog"]', { timeout: 3000 });
+                await page.evaluate(() => {
+                    document.querySelectorAll('button').forEach(button => {
+                        if (button.textContent.includes('Not Now') || 
+                            button.textContent.includes('Close')) {
+                            button.click();
+                        }
+                    });
+                });
+            } catch (e) {} // No popup found
+
+            // Wait for video
+            await Promise.race([
+                page.waitForSelector('video'),
+                page.waitForFunction(() => {
+                    return document.body.innerText.includes('Sorry, this page') ||
+                           document.body.innerText.includes('is not available');
                 })
             ]);
 
-            // Set up request interception for performance
-            await page.setRequestInterception(true);
-            page.on('request', (request) => {
-                const resourceType = request.resourceType();
-                if (['stylesheet', 'font', 'image'].includes(resourceType)) {
-                    request.abort();
-                } else {
-                    request.continue();
-                }
+            // Check if page is available
+            const isError = await page.evaluate(() => {
+                return document.body.innerText.includes('Sorry, this page') ||
+                       document.body.innerText.includes('isn not available');
             });
 
-            // Set up error logging
-            page.on('error', err => console.error('Page error:', err));
-            page.on('pageerror', err => console.error('Page error:', err));
-            page.on('console', msg => {
-                if (msg.type() === 'error' || msg.type() === 'warning') {
-                    console.log(`Console ${msg.type()}: ${msg.text()}`);
-                }
-            });
-
-            // Additional page verification
-            const isPageValid = await page.evaluate(() => true).catch(() => false);
-            if (!isPageValid) {
-                throw new Error('Page verification failed');
+            if (isError) {
+                throw new Error('Video not available');
             }
 
-            console.log('Page created and configured successfully');
-            return page;
+            // Extra wait for network
+            await page.waitForTimeout(3000);
+            return true;
         } catch (error) {
-            console.error(`Failed to create page (attempt ${retryCount + 1}):`, error);
+            console.error(`Navigation attempt ${attempt + 1} failed:`, error);
+            lastError = error;
             
-            if (page) {
-                try {
-                    await page.close().catch(() => {});
-                } catch (closeError) {
-                    console.error('Error closing failed page:', closeError);
-                }
+            if (attempt < maxAttempts - 1) {
+                await page.waitForTimeout(5000 * (attempt + 1));
             }
-            
-            retryCount++;
-            if (retryCount === maxRetries) {
-                throw new Error(`Failed to create page after ${maxRetries} attempts`);
-            }
-            
-            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
         }
     }
+    
+    throw lastError || new Error('Failed to navigate to reel');
 }
 
 // Helper function to handle navigation with better reliability
@@ -1702,103 +1661,128 @@ HTML: ${htmlPath}`);
     }
 }
 
-// Helper function to extract video URL with retries and rate limit handling
-async function extractVideoUrl(page, maxAttempts = 5) {
-    const videoStreams = new Map();
+// Helper to get highest quality video URL
+async function getBestVideoUrl(page) {
+    const videoUrls = new Map();
     
-    // Set up network monitoring
+    // Listen for video responses
     const client = await page.target().createCDPSession();
     await client.send('Network.enable');
     
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
         let resolved = false;
         
-        // Network response handler
         client.on('Network.responseReceived', (event) => {
             const { response } = event;
-            if (response.url.includes('cdninstagram.com')) {
-                // For video streams
-                if (response.url.includes('.mp4') && !response.url.includes('_audio')) {
-                    // Parse quality from URL
-                    let quality = 0;
-                    if (response.url.includes('dash_r2evevp9-r1gen2vp9_q90')) quality = 90;
-                    else if (response.url.includes('dash_r2evevp9-r1gen2vp9_q60')) quality = 60;
-                    else if (response.url.includes('dash_r2evevp9-r1gen2vp9_q30')) quality = 30;
-                    // Check vcodec in URL parameters
-                    const urlParams = new URLSearchParams(new URL(response.url).search);
-                    const efg = urlParams.get('efg');
-                    if (efg) {
-                        try {
-                            const efgData = JSON.parse(decodeURIComponent(efg));
-                            if (efgData.vencode_tag && efgData.vencode_tag.includes('q90')) quality = Math.max(quality, 90);
-                        } catch (e) {}
-                    }
+            if (response.url.includes('cdninstagram.com') && 
+                response.url.includes('.mp4') && 
+                !response.url.includes('_audio')) {
+                
+                const url = response.url.split('&bytestart')[0];
+                let quality = 0;
+                
+                // Determine quality
+                if (url.includes('_q90') || url.includes('q90')) quality = 90;
+                else if (url.includes('_q60') || url.includes('q60')) quality = 60;
+                else if (url.includes('_q30') || url.includes('q30')) quality = 30;
+                
+                videoUrls.set(url, quality);
+                
+                // Resolve with highest quality found so far
+                if (!resolved) {
+                    const qualities = Array.from(videoUrls.values());
+                    const maxQuality = Math.max(...qualities);
+                    const bestUrl = Array.from(videoUrls.entries())
+                        .find(([_, q]) => q === maxQuality)?.[0];
                     
-                    // Store stream URL without byte range parameters
-                    const baseUrl = response.url.split('&bytestart')[0];
-                    console.log(`Found video stream (quality: ${quality}):`, baseUrl);
-                    videoStreams.set(quality, baseUrl);
-                    
-                    // Resolve with highest quality stream so far
-                    if (!resolved) {
-                        const qualities = Array.from(videoStreams.keys());
-                        if (qualities.length > 0) {
-                            const maxQuality = Math.max(...qualities);
-                            resolved = true;
-                            resolve(videoStreams.get(maxQuality));
-                        }
+                    if (bestUrl) {
+                        resolved = true;
+                        resolve(bestUrl);
                     }
                 }
             }
         });
-
-        // Start page interaction
-        (async () => {
-            for (let attempt = 0; attempt < maxAttempts && !resolved; attempt++) {
-                try {
-                    await page.waitForTimeout(2000);
-                    if (attempt < maxAttempts - 1) {
-                        await page.reload({ 
-                            waitUntil: 'networkidle0',
-                            timeout: 30000 
-                        });
-                    }
-                } catch (error) {
-                    console.error(`Attempt ${attempt + 1} failed:`, error);
-                }
-            }
-            
-            // If we haven't resolved by now, try one last time with any quality
-            if (!resolved && videoStreams.size > 0) {
-                const firstUrl = videoStreams.values().next().value;
-                resolved = true;
-                resolve(firstUrl);
-            } else if (!resolved) {
-                reject(new Error('No video stream found'));
-            }
-        })();
-
-        // Set timeout
+        
+        // Timeout after 10s
         setTimeout(() => {
             if (!resolved) {
-                reject(new Error('Video extraction timeout'));
+                const firstUrl = videoUrls.keys().next().value;
+                resolve(firstUrl || null);
             }
-        }, 30000);
+        }, 10000);
     });
+}
+
+// Helper function to extract video URL with retries and rate limit handling
+async function extractVideoUrl(page, maxAttempts = 5) {
+    const videoUrls = new Map();
+    let client;
+
+    try {
+        client = await page.target().createCDPSession();
+        await client.send('Network.enable');
+
+        const requestPromise = new Promise((resolve) => {
+            client.on('Network.responseReceived', (event) => {
+                const { response } = event;
+                const url = response.url;
+                
+                if (url.includes('cdninstagram.com') && 
+                    url.includes('.mp4') && 
+                    response.mimeType.includes('video')) {
+                    const cleanUrl = url.split('&bytestart')[0];
+                    videoUrls.set(cleanUrl, response);
+                }
+            });
+
+            setTimeout(() => resolve(null), 10000); // 10s timeout
+        });
+
+        // Wait for network idle
+        await Promise.race([
+            page.waitForNetworkIdle({idleTime: 1000}),
+            requestPromise
+        ]);
+
+        // Get best quality URL
+        const bestUrl = await getBestVideoUrl(videoUrls);
+        if (bestUrl) return bestUrl;
+
+        // If no URL found yet, try page reload
+        for (let i = 0; i < maxAttempts && !bestUrl; i++) {
+            await page.reload({ waitUntil: 'networkidle0' });
+            await page.waitForTimeout(2000);
+        }
+
+        return await getBestVideoUrl(videoUrls);
+    } finally {
+        if (client) {
+            await client.detach().catch(() => {});
+        }
+    }
 }
 
 // Helper function to validate video data
 function isValidMP4Buffer(buffer) {
-    if (!buffer || buffer.length < 8) return false;
-    
-    // Check for MP4 signature
-    const signature = buffer.slice(4, 8).toString();
-    if (signature !== 'ftyp') return false;
-    
-    // Check for minimum valid size (100KB)
-    if (buffer.length < 100 * 1024) return false;
-    
-    return true;
+    try {
+        if (buffer.length < 100 * 1024) return false; // Min 100KB
+        
+        // Check MP4 header
+        const header = buffer.slice(0, 8);
+        const size = header.readUInt32BE(0);
+        const type = header.slice(4).toString();
+        
+        if (type !== 'ftyp') return false;
+        
+        // Check for moov and mdat boxes
+        const hasMovieBox = buffer.includes(Buffer.from('moov'));
+        const hasMediaBox = buffer.includes(Buffer.from('mdat'));
+        
+        return hasMovieBox && hasMediaBox;
+    } catch (e) {
+        console.error('Error validating MP4:', e);
+        return false;
+    }
 }
 
 // Add this rate limit handler
@@ -1821,85 +1805,79 @@ async function handleRateLimit(page, delay = 5000) {
 
 // Helper function to download video buffer with retries
 async function downloadVideoBuffer(page, videoUrl, maxAttempts = 3) {
-    let rateLimitCount = 0;
-    
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
-            console.log(`Downloading video (attempt ${attempt + 1}/${maxAttempts})`);
-            
-            const buffer = await page.evaluate(async (url) => {
-                try {
-                    const response = await fetch(url, {
-                        method: 'GET',
-                        headers: {
-                            'Accept': '*/*',
-                            'Accept-Encoding': 'gzip, deflate, br',
-                            'Accept-Language': 'en-US,en;q=0.9',
-                            'Connection': 'keep-alive',
-                            'Range': 'bytes=0-',
-                            'Referer': 'https://www.instagram.com/',
-                            'Origin': 'https://www.instagram.com',
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                            'Sec-Fetch-Dest': 'video',
-                            'Sec-Fetch-Mode': 'cors',
-                            'Sec-Fetch-Site': 'same-site'
-                        }
-                    });
-
-                    if (response.status === 429) {
-                        throw new Error('RATE_LIMIT');
+            // Get content length first
+            const { contentLength } = await page.evaluate(async (url) => {
+                const response = await fetch(url, {
+                    method: 'HEAD',
+                    headers: {
+                        'Accept': 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+                        'Referer': 'https://www.instagram.com/',
                     }
-
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-
-                    const arrayBuffer = await response.arrayBuffer();
-                    return Array.from(new Uint8Array(arrayBuffer));
-                } catch (error) {
-                    if (error.message === 'RATE_LIMIT') {
-                        throw error;
-                    }
-                    console.error('Download error:', error);
-                    return null;
-                }
+                });
+                return { 
+                    contentLength: response.headers.get('content-length'),
+                    acceptRanges: response.headers.get('accept-ranges')
+                };
             }, videoUrl);
 
-            // Handle rate limiting
-            if (buffer === null) {
-                rateLimitCount++;
-                const delay = Math.min(1000 * Math.pow(2, rateLimitCount), 30000);
-                await handleRateLimit(page, delay);
-                continue;
-            }
+            const totalSize = parseInt(contentLength);
+            if (!totalSize) throw new Error('Could not determine video size');
 
-            if (buffer && buffer.length > 0) {
-                const videoBuffer = Buffer.from(buffer);
-                console.log(`Downloaded buffer size: ${videoBuffer.length} bytes`);
+            console.log(`Video size: ${totalSize} bytes`);
 
-                // Basic validation
-                if (videoBuffer.length > 100 * 1024) { // At least 100KB
-                    return videoBuffer;
+            // Download in chunks
+            const chunkSize = 1024 * 1024; // 1MB chunks
+            const chunks = [];
+            let downloadedSize = 0;
+
+            for (let start = 0; start < totalSize; start += chunkSize) {
+                const end = Math.min(start + chunkSize - 1, totalSize - 1);
+                
+                const chunk = await page.evaluate(async (url, rangeStart, rangeEnd) => {
+                    const response = await fetch(url, {
+                        headers: {
+                            'Range': `bytes=${rangeStart}-${rangeEnd}`,
+                            'Accept': 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+                            'Referer': 'https://www.instagram.com/',
+                            'Origin': 'https://www.instagram.com',
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                        }
+                    });
+                    
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                    
+                    const buffer = await response.arrayBuffer();
+                    return Array.from(new Uint8Array(buffer));
+                }, videoUrl, start, end);
+                
+                if (!chunk || !chunk.length) {
+                    throw new Error(`Failed to download chunk ${start}-${end}`);
                 }
+
+                chunks.push(Buffer.from(chunk));
+                downloadedSize += chunk.length;
+                
+                console.log(`Downloaded: ${((downloadedSize / totalSize) * 100).toFixed(1)}%`);
+                
+                // Small delay between chunks to avoid rate limiting
+                await page.waitForTimeout(200);
             }
 
-            console.log('Invalid buffer received, retrying...');
-            await delay(getBackoffDelay(attempt));
+            const finalBuffer = Buffer.concat(chunks);
+            if (finalBuffer.length !== totalSize) {
+                throw new Error(`Size mismatch: expected ${totalSize}, got ${finalBuffer.length}`);
+            }
 
+            return finalBuffer;
         } catch (error) {
-            if (error.message === 'RATE_LIMIT') {
-                rateLimitCount++;
-                const delay = Math.min(1000 * Math.pow(2, rateLimitCount), 30000);
-                await handleRateLimit(page, delay);
-                continue;
-            }
-
             console.error(`Download attempt ${attempt + 1} failed:`, error);
             if (attempt === maxAttempts - 1) throw error;
-            await delay(getBackoffDelay(attempt));
+            await page.waitForTimeout(5000 * (attempt + 1));
         }
     }
-
+    
     throw new Error('Failed to download video after all attempts');
 }
 
@@ -1992,438 +1970,152 @@ async function handleLoginPopup(page) {
 
 // Main function to download Instagram Reel
 async function downloadInstagramReel(req, res) {
-    console.log('Starting Instagram reel download process');
-    const reelUrl = req.body.reelUrl;
-    const cleanMetadata = req.body.cleanMetadata;
-    console.log(`Reel URL: ${reelUrl}`);
-    console.log(`Clean metadata option: ${cleanMetadata}`);
-
-    if (!isValidInstagramUrl(reelUrl)) {
-        console.log('Invalid Instagram reel URL');
-        return res.status(400).json({ message: 'Invalid Instagram reel URL.' });
-    }
-
     let browser = null;
     let page = null;
     let tempFilePath = null;
     let outputFilePath = null;
     let job = null;
-    let browserReconnectAttempts = 0;
-    const maxBrowserReconnectAttempts = 2;
-    let isDownloadComplete = false;
 
     try {
-        // Initialize browser with proper disconnect handling
-        const initializeBrowser = async () => {
-            try {
-                browser = await createBrowser();
-                
-                // Set up disconnect handler that won't cause unhandled rejections
-                const handleDisconnect = async () => {
-                    console.log('Browser was disconnected');
-                    if (!isDownloadComplete && !res.headersSent && 
-                        browserReconnectAttempts < maxBrowserReconnectAttempts) {
-                        browserReconnectAttempts++;
-                        console.log(`Attempting browser reconnection (${browserReconnectAttempts}/${maxBrowserReconnectAttempts})`);
-                        try {
-                            await initializeBrowser();
-                        } catch (error) {
-                            console.error('Failed to reconnect browser:', error);
-                        }
-                    } else {
-                        console.log('Skipping browser reconnection - download complete or max attempts reached');
-                    }
-                };
-
-                browser.on('disconnected', handleDisconnect);
-                return browser;
-            } catch (error) {
-                throw new Error(`Failed to initialize browser: ${error.message}`);
-            }
-        };
-
-        console.log('Initializing browser...');
-        browser = await initializeBrowser();
-        console.log('Browser created successfully');
-
-        // Create page with retry logic
-        let pageCreated = false;
-        let pageAttempt = 0;
-        const maxPageAttempts = 2;
-
-        while (!pageCreated && pageAttempt < maxPageAttempts) {
-            try {
-                console.log(`Creating page attempt ${pageAttempt + 1}/${maxPageAttempts}...`);
-                if (!browser.isConnected()) {
-                    throw new Error('Browser disconnected during page creation');
-                }
-                page = await createPage(browser);
-                pageCreated = true;
-                console.log('Page created successfully');
-            } catch (error) {
-                console.error(`Page creation attempt ${pageAttempt + 1} failed:`, error);
-                pageAttempt++;
-                if (pageAttempt === maxPageAttempts) {
-                    throw new Error('Failed to create page after multiple attempts');
-                }
-                await delay(1000 * pageAttempt);
-            }
+        if (!isValidInstagramUrl(req.body.reelUrl)) {
+            return res.status(400).json({ message: 'Invalid Instagram reel URL' });
         }
 
-        // Navigation with retry logic
-        let navigationAttempt = 0;
-        const maxNavigationAttempts = 5;
-        let navigationSuccess = false;
+        browser = await createBrowser();
+        page = await createPage(browser);
 
-        while (navigationAttempt < maxNavigationAttempts && !navigationSuccess) {
-            try {
-                console.log(`Navigation attempt ${navigationAttempt + 1}/${maxNavigationAttempts}`);
-                
-                // Clear storage with error handling
-                await page.evaluate(() => {
-                    try {
-                        localStorage.clear();
-                        sessionStorage.clear();
-                    } catch (e) {
-                        console.log('Storage clear failed, continuing...');
-                    }
-                }).catch(() => console.log('Storage clear evaluation failed'));
-                
-                // Navigate to the URL with longer timeout
-                await page.goto(reelUrl, {
-                    waitUntil: ['networkidle0', 'domcontentloaded'],
-                    timeout: 60000 // Increased timeout
-                });
-                
-                // Handle login popup
-                await handleLoginPopup(page);
-                
-                // Wait longer for content to load
-                await page.waitForTimeout(5000);
-                
-                // Wait for content with verification
-                const contentLoaded = await waitForContent(page);
-                if (contentLoaded) {
-                    navigationSuccess = true;
-                    console.log('Navigation successful');
-                    // Add extra delay before proceeding
-                    await page.waitForTimeout(3000);
-                } else {
-                    throw new Error('Content not loaded properly');
-                }
-            } catch (error) {
-                console.error(`Navigation attempt ${navigationAttempt + 1} failed:`, error.message);
-                navigationAttempt++;
-                
-                if (navigationAttempt === maxNavigationAttempts) {
-                    throw new Error('Failed to navigate to reel URL after all attempts');
-                }
-                
-                const backoffDelay = getBackoffDelay(navigationAttempt);
-                console.log(`Waiting ${backoffDelay}ms before retry...`);
-                await delay(backoffDelay);
-                
-                // Recreate page on navigation failure
-                try {
-                    await page.close().catch(() => console.log('Failed to close old page'));
-                    page = await createPage(browser);
-                } catch (e) {
-                    console.error('Error recreating page:', e);
-                }
-            }
-        }
+        // Navigate to reel
+        await navigateToReel(page, req.body.reelUrl);
 
-        // Extract video URL with enhanced error handling
-        const videoUrl = await extractVideoUrl(page).catch(async (error) => {
-            console.error('Error extracting video URL:', error);
-            await saveDebugInfo(page, 'video_extraction_failed');
-            return null;
-        });
-        
+        // Get best quality video URL
+        const videoUrl = await getBestVideoUrl(page);
         if (!videoUrl) {
-            await saveDebugInfo(page, 'no_video_found');
-            return res.status(400).json({ 
-                message: 'Unable to find the video. The reel might be private or unavailable.' 
-            });
+            throw new Error('Could not find video URL');
         }
+        console.log('Found video URL:', videoUrl);
 
-        // Get working video URL
-        const workingVideoUrl = await getWorkingVideoUrl(page, videoUrl);
-        console.log(`Using video URL: ${workingVideoUrl}`);
-
-
-        // Download video with retry logic
-        let downloadAttempt = 0;
-        const maxDownloadAttempts = 3;
-        let buffer = null;
-
-        while (downloadAttempt < maxDownloadAttempts && !buffer) {
-            try {
-                buffer = await downloadVideoBuffer(page, workingVideoUrl);
-                if (!buffer || buffer.length === 0) {
-                    throw new Error('Empty buffer received');
-                }
-            } catch (error) {
-                console.error(`Download attempt ${downloadAttempt + 1} failed:`, error);
-                downloadAttempt++;
-                if (downloadAttempt === maxDownloadAttempts) {
-                    throw new Error('Failed to download video after all attempts');
-                }
-                await delay(getBackoffDelay(downloadAttempt));
-            }
+        // Download video
+        const buffer = await downloadVideoBuffer(page, videoUrl);
+        if (!buffer || !isValidMP4Buffer(buffer)) {
+            throw new Error('Invalid video data received');
         }
         
-        tempFilePath = path.join(__dirname, '../uploads', `temp_reel_${Date.now()}.mp4`);
-        console.log(`Saving temporary file: ${tempFilePath}`);
+        // Save temp file
+        tempFilePath = path.join(__dirname, '../uploads', `reel_${Date.now()}.mp4`);
         await fs.writeFile(tempFilePath, buffer);
-
-        // Verify the saved file
+        
+        // Verify file is valid MP4
         const fileStats = await fs.stat(tempFilePath);
-        if (fileStats.size === 0) {
-            throw new Error('Downloaded file is empty');
+        if (fileStats.size < 100 * 1024) { // Less than 100KB
+            throw new Error('Downloaded file too small');
         }
 
-        // Verify MP4 structure
-        const fileBuffer = await fs.readFile(tempFilePath);
-        if (!isValidMP4Buffer(fileBuffer)) {
-            await fs.unlink(tempFilePath);
-            throw new Error('Invalid MP4 file structure');
-        }
-
-        // Set flag before sending response
-        isDownloadComplete = true;
-
-        if (cleanMetadata) {
-            console.log('Cleaning metadata requested, processing video');
-            outputFilePath = path.join(__dirname, '../uploads', `processed_reel_${Date.now()}.mp4`);
+        // Process or send directly
+        if (req.body.cleanMetadata) {
+            outputFilePath = path.join(__dirname, '../uploads', `processed_${Date.now()}.mp4`);
             
+            // Add to processing queue
             job = await videoQueue.add({
                 inputPath: tempFilePath,
                 outputPath: outputFilePath,
-                isReel: true,
-                originalName: 'instagram_reel.mp4'
+                isReel: true
             }, {
                 timeout: 300000,
                 attempts: 2,
-                backoff: {
-                    type: 'exponential',
-                    delay: 2000
-                },
-                removeOnComplete: false
+                backoff: { type: 'exponential', delay: 2000 }
             });
 
+            // Wait for processing
             await new Promise((resolve, reject) => {
-                let lastState = null;
-                let completed = false;
-                let processingTimeout;
-
-                const cleanup = () => {
-                    if (processingTimeout) {
-                        clearTimeout(processingTimeout);
-                    }
-                };
-
-                processingTimeout = setTimeout(() => {
-                    cleanup();
+                const processingTimeout = setTimeout(() => {
                     reject(new Error('Processing timeout'));
                 }, 240000);
 
                 const checkJob = async () => {
-                    try {
-                        if (completed) return;
+                    const currentJob = await videoQueue.getJob(job.id);
+                    if (!currentJob) return reject(new Error('Job not found'));
 
-                        const currentJob = await videoQueue.getJob(job.id);
-                        
-                        if (!currentJob) {
-                            const fileExists = await verifyFile(outputFilePath);
-                            if (fileExists) {
-                                completed = true;
-                                cleanup();
-                                resolve();
-                                return;
-                            }
-                            reject(new Error('Job completed but output file not found'));
-                            return;
-                        }
-
-                        const state = await currentJob.getState();
-                        const progress = await currentJob.progress();
-
-                        if (state !== lastState) {
-                            console.log(`Job ${job.id} state changed to: ${state}`);
-                            lastState = state;
-                        }
-
-                        switch (state) {
-                            case 'completed':
-                                const fileExists = await verifyFile(outputFilePath);
-                                if (fileExists) {
-                                    completed = true;
-                                    cleanup();
-                                    resolve(currentJob);
-                                    return;
-                                }
-                                reject(new Error('Job completed but output file not found'));
-                                return;
-                            case 'failed':
-                                cleanup();
-                                reject(new Error(currentJob.failedReason || 'Job failed'));
-                                return;
-                            case 'stuck':
-                                cleanup();
-                                reject(new Error('Job is stuck'));
-                                return;
-                            default:
-                                console.log(`Processing: ${progress}%`);
-                                setTimeout(checkJob, 1000);
-                        }
-                    } catch (error) {
-                        if (!completed) {
-                            cleanup();
-                            reject(error);
-                        }
+                    const state = await currentJob.getState();
+                    if (state === 'completed') {
+                        clearTimeout(processingTimeout);
+                        resolve();
+                    } else if (state === 'failed') {
+                        clearTimeout(processingTimeout);
+                        reject(new Error(currentJob.failedReason || 'Processing failed'));
+                    } else {
+                        setTimeout(checkJob, 1000);
                     }
                 };
 
                 checkJob();
             });
 
-            console.log('Verifying processed file...');
-            const fileExists = await verifyFile(outputFilePath);
-            if (!fileExists) {
-                throw new Error('Processed file not found');
-            }
-
-            console.log('Sending processed file to client');
+            // Send processed file
             const processedStats = await fs.stat(outputFilePath);
-
             res.setHeader('Content-Type', 'video/mp4');
-            res.setHeader('Content-Disposition', `attachment; filename="processed_reel.mp4"`);
+            res.setHeader('Content-Disposition', 'attachment; filename="processed_reel.mp4"');
             res.setHeader('Content-Length', processedStats.size);
-            res.setHeader('Connection', 'keep-alive');
-    
+            
             const fileStream = fsSync.createReadStream(outputFilePath);
             fileStream.pipe(res);
-    
+            
             fileStream.on('end', async () => {
-                console.log('Cleaning up files after download');
                 await Promise.all([
-                    fs.unlink(tempFilePath).catch(e => console.error('Error deleting temp file:', e)),
-                    fs.unlink(outputFilePath).catch(e => console.error('Error deleting output file:', e))
+                    fs.unlink(tempFilePath).catch(console.error),
+                    fs.unlink(outputFilePath).catch(console.error)
                 ]);
-        
-                if (job) {
-                    try {
-                        const jobInstance = await videoQueue.getJob(job.id);
-                        if (jobInstance) {
-                            await jobInstance.remove();
-                            console.log('Job cleaned up');
-                        }
-                    } catch (error) {
-                        console.error('Error cleaning up job:', error);
-                    }
-                }
+                if (job) await videoQueue.getJob(job.id)?.remove().catch(console.error);
             });
         } else {
-            console.log('Sending original video to client without processing');
-            const fileStats = await fs.stat(tempFilePath);
+            // Send file
+            const stats = await fs.stat(tempFilePath);
             
             res.setHeader('Content-Type', 'video/mp4');
-            res.setHeader('Content-Disposition', `attachment; filename="instagram_reel.mp4"`);
-            res.setHeader('Content-Length', fileStats.size);
+            res.setHeader('Content-Disposition', 'attachment; filename="instagram_reel.mp4"');
+            res.setHeader('Content-Length', stats.size);
             res.setHeader('Connection', 'keep-alive');
             
-            const fileStream = fsSync.createReadStream(tempFilePath);
-            fileStream.pipe(res);
+            const stream = fsSync.createReadStream(tempFilePath);
+            stream.pipe(res);
             
-            fileStream.on('end', async () => {
-                console.log('Cleaning up temporary file');
-                try {
-                    await fs.unlink(tempFilePath);
-                    console.log('Temporary file deleted');
-                } catch (unlinkError) {
-                    console.error('Error deleting temporary file:', unlinkError);
-                }
+            await new Promise((resolve, reject) => {
+                stream.on('end', resolve);
+                stream.on('error', reject);
             });
+            // Cleanup
+            await fs.unlink(tempFilePath).catch(console.error);
         }
     } catch (error) {
-        console.error(`Error downloading the reel: ${error.message}`);
-        console.error(`Stack trace: ${error.stack}`);
+        console.error('Download failed:', error);
         
-        // Enhanced cleanup
-        try {
-            if (tempFilePath) {
-                await verifyFile(tempFilePath) && await fs.unlink(tempFilePath);
-            }
-            if (outputFilePath) {
-                await verifyFile(outputFilePath) && await fs.unlink(outputFilePath);
-            }
-            if (job) {
-                const jobInstance = await videoQueue.getJob(job.id);
-                if (jobInstance) {
-                    await jobInstance.remove();
-                }
-            }
-        } catch (cleanupError) {
-            console.error('Error during cleanup:', cleanupError);
-        }
+        // Cleanup files
+        if (tempFilePath) await fs.unlink(tempFilePath).catch(console.error);
+        if (outputFilePath) await fs.unlink(outputFilePath).catch(console.error);
+        if (job) await videoQueue.getJob(job.id)?.remove().catch(console.error);
 
         if (!res.headersSent) {
             res.status(500).json({ 
-                message: 'Error downloading the reel.',
+                message: 'Failed to download video',
                 error: error.message 
             });
         }
     } finally {
-        // Enhanced cleanup with proper order and error handling
-        if (page) {
-            try {
-                console.log('Closing page...');
-                if (!page.isClosed()) {
-                    await page.close().catch(e => console.error('Error closing page:', e));
-                }
-                console.log('Page closed successfully');
-            } catch (error) {
-                console.error('Error during page cleanup:', error);
-            }
-        }
-        
-        if (browser) {
-            try {
-                console.log('Closing browser...');
-                // Remove all listeners before closing to prevent disconnect events
-                browser.removeAllListeners('disconnected');
-                if (browser.isConnected()) {
-                    await browser.close().catch(e => console.error('Error closing browser:', e));
-                }
-                console.log('Browser closed successfully');
-            } catch (error) {
-                console.error('Error during browser cleanup:', error);
-            }
-        }
+        if (page) await page.close().catch(console.error);
+        if (browser) await browser.close().catch(console.error);
     }
 }
 
 // Route to handle download requests
 router.post('/download-reel', async (req, res) => {
-    const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Operation timed out')), 300000)
-    );
-
-    try{
-        await Promise.race([downloadInstagramReel(req, res), timeoutPromise]);
+    try {
+        await Promise.race([
+            downloadInstagramReel(req, res),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Operation timed out')), 300000))
+        ]);
     } catch (error) {
-        if (error.message === 'Operation timed out') {
-            console.error('The operation timed out');
-            if (!res.headersSent) {
-                res.status(504).json({ message: 'The operation timed out.' });
-            }
-        } else {
-            console.error(`Unexpected error: ${error.message}`);
-            console.error(error.stack);
-            if (!res.headersSent) {
-                res.status(500).json({ message: 'An unexpected error occurred.', error: error.message });
-            }
+        if (!res.headersSent) {
+            res.status(error.message === 'Operation timed out' ? 504 : 500)
+               .json({ message: error.message });
         }
     }
 });

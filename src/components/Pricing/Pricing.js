@@ -32,7 +32,7 @@ const Pricing = () => {
   return (
     <div className="pricing-card">
       <h2>Video & Reel Cleaner</h2>
-      <div className="price">$49 <span>/month</span></div>
+      <div className="price">$29 <span>/month</span></div>
       <button className="get-started-btn" onClick={handleGetStarted}>Get Started</button>
       <ul>
         <li>IDEAL for short form marketing.</li>
