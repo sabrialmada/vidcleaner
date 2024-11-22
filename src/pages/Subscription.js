@@ -219,7 +219,7 @@ const Subscription = () => {
 
 export default Subscription; */
 
-import React from 'react';
+/* import React from 'react';
 import { Elements } from '@stripe/react-stripe-js';
 import stripePromise from '../stripe';
 import CheckoutForm from '../components/CheckoutForm';
@@ -234,6 +234,25 @@ const Subscription = () => {
         <Elements stripe={stripePromise}>
           <CheckoutForm />
         </Elements>
+      </div>
+    </div>
+  );
+};
+
+export default Subscription; */
+
+import React from 'react';
+import './Subscription.css';
+
+const Subscription = () => {
+  return (
+    <div className="subscription-container">
+      <div className="subscription-card">
+        <h2>Subscribe to VidCleaner</h2>
+        <p className="price">$29<span>/month</span></p>
+        <a href="https://buy.stripe.com/14k02685Y4mzgMg5ks" className="subscribe-btn">
+          Subscribe Now
+        </a>
       </div>
     </div>
   );
