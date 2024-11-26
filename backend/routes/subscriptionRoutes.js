@@ -270,6 +270,48 @@ router.get('/status', authenticateToken, limiter, async (req, res) => {
   }
 });
 
+// New route to create checkout session
+router.post('/create-checkout-session', authenticateToken, limiter, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Create or get customer
+    let customerId = user.stripeCustomerId;
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: user.email,
+        metadata: { userId: user.id }
+      });
+      customerId = customer.id;
+      user.stripeCustomerId = customerId;
+      await user.save();
+    }
+
+    // Create the session
+    const session = await stripe.checkout.sessions.create({
+      customer: customerId,
+      payment_method_types: ['card'],
+      mode: 'subscription',
+      line_items: [{
+        price: process.env.STRIPE_PRICE_ID, // Your price ID from Stripe
+        quantity: 1,
+      }],
+      success_url: `${process.env.FRONTEND_URL}/dashboard?success=true`,
+      cancel_url: `${process.env.FRONTEND_URL}/subscription?canceled=true`,
+      client_reference_id: user.id,
+      customer_email: user.email,
+    });
+
+    res.json({ url: session.url });
+  } catch (error) {
+    logger.error('Error creating checkout session:', { userId: req.user.id, error: error.message });
+    res.status(500).json({ message: 'Error creating checkout session' });
+  }
+});
+
 // Create a subscription
 router.post('/create', authenticateToken, limiter, async (req, res) => {
   try {
@@ -394,6 +436,10 @@ router.post('/webhook', express.raw({type: 'application/json'}), async (req, res
 
   try {
     switch (event.type) {
+      case 'checkout.session.completed':
+        const session = event.data.object;
+        await handleCheckoutSessionCompleted(session);
+        break;
       case 'invoice.payment_succeeded':
         await handlePaymentSucceeded(event.data.object);
         break;
@@ -479,6 +525,32 @@ async function updateUserSubscription(user, subscription) {
   user.subscriptionPlan = 'Monthly';
   user.subscriptionAmount = 29.00;
   await user.save();
+}
+
+async function handleCheckoutSessionCompleted(session) {
+  if (session.mode !== 'subscription') return;
+
+  const userId = session.client_reference_id;
+  const user = await User.findById(userId);
+  
+  if (!user) {
+    logger.error('User not found for completed checkout session', { userId });
+    return;
+  }
+
+  // Get the subscription details
+  const subscription = await stripe.subscriptions.retrieve(session.subscription);
+
+  user.stripeCustomerId = session.customer;
+  user.stripeSubscriptionId = session.subscription;
+  user.subscriptionStatus = 'active';
+  user.subscriptionStartDate = new Date();
+  user.subscriptionEndDate = new Date(subscription.current_period_end * 1000);
+  user.subscriptionPlan = 'Monthly';
+  user.subscriptionAmount = 29.00;
+
+  await user.save();
+  logger.info('User subscription activated from checkout session', { userId: user.id });
 }
 
 module.exports = router;

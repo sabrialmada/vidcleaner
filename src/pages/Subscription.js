@@ -241,18 +241,20 @@ const Subscription = () => {
 
 export default Subscription; */
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import './Subscription.css';
 
 const Subscription = () => {
+  useEffect(() => {
+    // Direct redirect to Stripe Checkout
+    window.location.href = 'https://buy.stripe.com/14k02685Y4mzgMg5ks';
+  }, []);
+
+  // Optional loading state while redirect happens
   return (
     <div className="subscription-container">
       <div className="subscription-card">
-        <h2>Subscribe to VidCleaner</h2>
-        <p className="price">$29<span>/month</span></p>
-        <a href="https://buy.stripe.com/14k02685Y4mzgMg5ks" className="subscribe-btn">
-          Subscribe Now
-        </a>
+        <h2>Redirecting to checkout...</h2>
       </div>
     </div>
   );
