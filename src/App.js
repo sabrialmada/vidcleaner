@@ -480,6 +480,11 @@ import VideoCleaner from './pages/Cleaner/VideoCleaner';
 import InstagramReel from './pages/Scraper/InstagramReel';
 import UserProfile from './components/UserProfile';
 import ProtectedRoute from './components/ProtectedRoute';
+import TermsAndConditions from './pages/Terms/TermsAndConditions';
+import PrivacyPolicy from './pages/Terms/PrivacyPolicy';
+import RefundPolicy from './pages/Terms/RefundPolicy';
+import SubscriptionPolicy from './pages/Terms/SubscriptionPolicy';
+import DMCAPolicy from './pages/Terms/DMCAPolicy';
 import './App.css';
 
 // Lazy load the Subscription component
@@ -511,6 +516,11 @@ function App() {
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login setUserEmail={setUserEmail} />} />
           <Route path="/register" element={<Register setUserEmail={setUserEmail} />} />
+          <Route path="/terms-and-conditions" element={<TermsAndConditions />} /> 
+          <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+          <Route path="/refund-policy" element={<RefundPolicy />} />
+          <Route path="/subscription-policy" element={<SubscriptionPolicy />} />
+          <Route path="/dmca-policy" element={<DMCAPolicy />} />          
           <Route path="/subscription" element={
             <ProtectedRoute>
               <Subscription />

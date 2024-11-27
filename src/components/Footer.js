@@ -1,6 +1,7 @@
 
 
 import React from 'react';
+import { Link } from 'react-router-dom';
 import VidCleanerLogo from '../assets/VidCleaner.png';  
 
 const Footer = () => {
@@ -66,19 +67,49 @@ const Footer = () => {
         </div>
 
         <div style={styles.section}>
-          <h3 style={styles.sectionTitle}>Follow US</h3>
+          <h3 style={styles.sectionTitle}>Platforms</h3>
           <a href="https://www.instagram.com/vidcleaner?igsh=ZHQ0bDVhZTVuNTBu" style={styles.link}
             target="_blank"
             rel="noopener noreferrer"
           >Instagram</a>
-        </div>
-
-        <div style={styles.section}>
-          <h3 style={styles.sectionTitle}>Platforms</h3>
           <a href="https://t.me/vidcleaner" style={styles.link}
             target="_blank"
             rel="noopener noreferrer"
           >Telegram</a>
+        </div>
+
+        <div style={styles.section}>
+          <h3 style={styles.sectionTitle}>Terms & Conditions</h3>
+          <Link 
+            to="/terms-and-conditions" 
+            style={styles.link}
+            >
+            Terms and Conditions Policy
+            </Link>
+            <Link 
+            to="/privacy-policy" 
+            style={styles.link}
+            >
+            Privacy Policy
+            </Link>
+            <Link 
+            to="/refund-policy" 
+            style={styles.link}
+            >
+            Refund Policy
+            </Link>
+            <Link 
+            to="/subscription-policy" 
+            style={styles.link}
+            >
+            Subscription and Cancellation Policy
+            </Link>
+            <Link 
+            to="/dmca-policy" 
+            style={styles.link}
+            >
+            DMCA and Copyright Policy
+            </Link>
         </div>
       </div>
 
