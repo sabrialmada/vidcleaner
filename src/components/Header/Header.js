@@ -140,7 +140,7 @@ export default Header; */
 import React from 'react';
 import './Header.css';
 import { useNavigate } from 'react-router-dom';
-import logo from '../../assets/logo.png';
+import logo from '../../assets/VidCleaner.png';
 
 const Header = ({ userEmail, onLogout }) => {
   const navigate = useNavigate();
@@ -175,7 +175,6 @@ const Header = ({ userEmail, onLogout }) => {
           style={{ cursor: 'pointer' }} // Add pointer cursor to indicate clickable
         >
           <img src={logo} alt="VidCleaner Logo" className="logo-image" />
-          <div className="logo-text">VidCleaner</div>
         </div>
         <div className="nav-links">
           {userEmail ? (
