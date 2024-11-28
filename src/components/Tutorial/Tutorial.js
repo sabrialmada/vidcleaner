@@ -54,15 +54,14 @@ const Tutorial = () => {
     <section className="tutorial-section">
       <div className="tutorial-container">
         <div className="video-container">
-          <video 
+          <iframe
             className="tutorial-video"
-            controls
-            playsInline
-            preload="metadata"
-          >
-            <source src="/tutorial.mp4" type="video/mp4" />
-            Your browser does not support the video tag.
-          </video>
+            src="https://www.youtube.com/embed//35aqAgTHIGs?si=IwRQ7Xh0e2zj1rSF"
+            title="VidCleaner Tutorial"
+            frameBorder="0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+          ></iframe>
         </div>
       </div>
     </section>

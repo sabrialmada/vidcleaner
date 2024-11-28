@@ -9,21 +9,28 @@
   }
   
   .video-container {
+    position: relative;
     width: 100%;
     max-width: 800px;
     margin: 0 auto;
-    border-radius: 8px;
+    padding-bottom: 56.25%; /* This maintains 16:9 aspect ratio */
+    height: 0;
     overflow: hidden;
+    border-radius: 8px;
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
   }
   
   .tutorial-video {
+    position: absolute;
+    top: 0;
+    left: 0;
     width: 100%;
-    display: block;
+    height: 100%;
+    border: 0;
   }
   
   @media (max-width: 768px) {
     .tutorial-container {
-      padding: 0 0px;
+      padding: 0 20px;
     }
   }
