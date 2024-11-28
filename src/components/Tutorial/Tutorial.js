@@ -56,7 +56,7 @@ const Tutorial = () => {
         <div className="video-container">
           <iframe
             className="tutorial-video"
-            src="https://www.youtube.com/embed//35aqAgTHIGs?si=IwRQ7Xh0e2zj1rSF"
+            src="https://www.youtube.com/embed/35aqAgTHIGs"
             title="VidCleaner Tutorial"
             frameBorder="0"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
