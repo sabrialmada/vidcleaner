@@ -28,7 +28,7 @@ export default Home; */
 
 import React from 'react';
 import Hero from '../components/Hero';
-import Pricing from '../components/Pricing/Pricing';
+import Pricing from '../components/Tutorial/Tutorial';
 import Stats from '../components/Stats';
 import Steps from '../components/Steps';
 import FAQ from '../components/FAQ';

@@ -1,119 +1,63 @@
-
-
 import React from 'react';
 import { Link } from 'react-router-dom';
-import VidCleanerLogo from '../assets/VidCleaner.png';  
+import VidCleanerLogo from '../assets/VidCleaner.png';
+import './Footer.css';
 
 const Footer = () => {
-  const styles = {
-    footer: {
-      padding: '40px 0',
-      backgroundColor: '#fff',
-      borderTop: '1px solid #e5e7eb'
-    },
-    container: {
-      maxWidth: '1200px',
-      margin: '0 auto',
-      padding: '0 40px',
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'flex-start'
-    },
-    brand: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px'
-    },
-    logo: {
-      width: '200px',
-      height: 'auto'
-    },
-    section: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '16px'
-    },
-    sectionTitle: {
-      fontSize: '1.125rem',
-      fontWeight: 'bold',
-      color: '#000'
-    },
-    link: {
-      color: '#666',
-      textDecoration: 'none',
-      fontSize: '1rem'
-    },
-    copyright: {
-      maxWidth: '1200px',
-      margin: '40px auto 0',
-      padding: '20px 40px 0',
-      borderTop: '1px solid #e5e7eb',
-      textAlign: 'center',
-      color: '#666'
-    }
-  };
-
   return (
-    <footer style={styles.footer}>
-      <div style={styles.container}>
-        <div style={styles.section}>
-          <div style={styles.brand}>
+    <footer className="footer">
+      <div className="footer-container">
+        <div className="footer-section">
+          <div className="brand">
             <img 
-              src={VidCleanerLogo} // You'll need to put the correct path to your logo file
+              src={VidCleanerLogo}
               alt="VidCleaner"
-              style={styles.logo}
+              className="logo"
             />
           </div>
         </div>
 
-        <div style={styles.section}>
-          <h3 style={styles.sectionTitle}>Platforms</h3>
-          <a href="https://www.instagram.com/vidcleaner?igsh=ZHQ0bDVhZTVuNTBu" style={styles.link}
+        <div className="footer-section">
+          <h3 className="section-title">Platforms</h3>
+          <a 
+            href="https://www.instagram.com/vidcleaner?igsh=ZHQ0bDVhZTVuNTBu"
+            className="footer-link"
             target="_blank"
             rel="noopener noreferrer"
-          >Instagram</a>
-          <a href="https://t.me/vidcleaner" style={styles.link}
+          >
+            Instagram
+          </a>
+          <a 
+            href="https://t.me/vidcleaner"
+            className="footer-link"
             target="_blank"
             rel="noopener noreferrer"
-          >Telegram</a>
+          >
+            Telegram
+          </a>
         </div>
 
-        <div style={styles.section}>
-          <h3 style={styles.sectionTitle}>Terms & Conditions</h3>
-          <Link 
-            to="/terms-and-conditions" 
-            style={styles.link}
-            >
+        <div className="footer-section">
+          <h3 className="section-title">Terms & Conditions</h3>
+          <Link to="/terms-and-conditions" className="footer-link">
             Terms and Conditions Policy
-            </Link>
-            <Link 
-            to="/privacy-policy" 
-            style={styles.link}
-            >
+          </Link>
+          <Link to="/privacy-policy" className="footer-link">
             Privacy Policy
-            </Link>
-            <Link 
-            to="/refund-policy" 
-            style={styles.link}
-            >
+          </Link>
+          <Link to="/refund-policy" className="footer-link">
             Refund Policy
-            </Link>
-            <Link 
-            to="/subscription-policy" 
-            style={styles.link}
-            >
+          </Link>
+          <Link to="/subscription-policy" className="footer-link">
             Subscription and Cancellation Policy
-            </Link>
-            <Link 
-            to="/dmca-policy" 
-            style={styles.link}
-            >
+          </Link>
+          <Link to="/dmca-policy" className="footer-link">
             DMCA and Copyright Policy
-            </Link>
+          </Link>
         </div>
       </div>
 
-      <div style={styles.copyright}>
+      <div className="copyright">
         © 2024 VidCleaner
       </div>
     </footer>
