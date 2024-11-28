@@ -80,10 +80,20 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 100px 20px;
+  padding: 170px 0px;
   max-width: 1200px;
   margin: 0 auto;
   gap: 40px;
+}
+
+.hero-content {
+  flex: 1;
+  max-width: 600px;
+}
+
+.tutorial-content {
+  flex: 1;
+  max-width: 600px;
 }
 
 .hero-text {
@@ -144,6 +154,12 @@ body {
   .hero-section {
     flex-direction: column;
     padding: 100px 20px 0px;
+  }
+  
+  .hero-content,
+  .tutorial-content {
+    width: 100%;
+    max-width: 100%;
   }
   
   .hero-text {
