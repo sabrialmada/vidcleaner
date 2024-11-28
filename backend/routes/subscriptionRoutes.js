@@ -528,29 +528,42 @@ async function updateUserSubscription(user, subscription) {
 }
 
 async function handleCheckoutSessionCompleted(session) {
-  if (session.mode !== 'subscription') return;
+  try {
+    // Find user by email since it's guaranteed to be present
+    const user = await User.findOne({ email: session.customer_details.email });
+    
+    if (!user) {
+      logger.error('User not found for checkout session:', { 
+        sessionId: session.id,
+        email: session.customer_details.email 
+      });
+      return;
+    }
 
-  const userId = session.client_reference_id;
-  const user = await User.findById(userId);
-  
-  if (!user) {
-    logger.error('User not found for completed checkout session', { userId });
-    return;
+    // Get subscription details
+    const subscription = await stripe.subscriptions.retrieve(session.subscription);
+
+    // Update user subscription details
+    user.stripeCustomerId = session.customer;
+    user.stripeSubscriptionId = session.subscription;
+    user.subscriptionStatus = 'active';
+    user.subscriptionStartDate = new Date();
+    user.subscriptionEndDate = new Date(subscription.current_period_end * 1000);
+    user.subscriptionPlan = 'Monthly';
+    user.subscriptionAmount = 29.00;
+
+    await user.save();
+
+    logger.info('User subscription activated from checkout session', { 
+      userId: user.id,
+      subscriptionId: subscription.id 
+    });
+  } catch (error) {
+    logger.error('Error handling checkout session completion:', {
+      error: error.message,
+      sessionId: session.id
+    });
   }
-
-  // Get the subscription details
-  const subscription = await stripe.subscriptions.retrieve(session.subscription);
-
-  user.stripeCustomerId = session.customer;
-  user.stripeSubscriptionId = session.subscription;
-  user.subscriptionStatus = 'active';
-  user.subscriptionStartDate = new Date();
-  user.subscriptionEndDate = new Date(subscription.current_period_end * 1000);
-  user.subscriptionPlan = 'Monthly';
-  user.subscriptionAmount = 29.00;
-
-  await user.save();
-  logger.info('User subscription activated from checkout session', { userId: user.id });
 }
 
 module.exports = router;

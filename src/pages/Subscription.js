@@ -242,15 +242,42 @@ const Subscription = () => {
 export default Subscription; */
 
 import React, { useEffect } from 'react';
+import axios from 'axios';
 import './Subscription.css';
+
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'https://vidcleaner-production.up.railway.app';
 
 const Subscription = () => {
   useEffect(() => {
-    // Direct redirect to Stripe Checkout
-    window.location.href = 'https://buy.stripe.com/14k02685Y4mzgMg5ks';
+    const initiateCheckout = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) {
+          window.location.href = '/login';
+          return;
+        }
+
+        // Create a checkout session that includes user data
+        const response = await axios.post(
+          `${API_BASE_URL}/api/subscriptions/create-checkout-session`,
+          {},
+          {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          }
+        );
+
+        // Redirect to Stripe's checkout
+        window.location.href = response.data.url;
+      } catch (error) {
+        console.error('Error initiating checkout:', error);
+      }
+    };
+
+    initiateCheckout();
   }, []);
 
-  // Optional loading state while redirect happens
   return (
     <div className="subscription-container">
       <div className="subscription-card">
