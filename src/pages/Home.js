@@ -28,18 +28,18 @@ export default Home; */
 
 import React from 'react';
 import Hero from '../components/Hero';
-import Pricing from '../components/Tutorial/Tutorial';
 import Stats from '../components/Stats';
 import Steps from '../components/Steps';
 import FAQ from '../components/FAQ';
 import Footer from '../components/Footer'; 
+import Tutorial from '../components/Tutorial/Tutorial';
 
 const Home = () => {
   return (
     <div className="home-container">
       <div className="hero-section">
         <Hero />
-        <Pricing />
+        <Tutorial />
       </div>
       <Stats />
       <Steps />
