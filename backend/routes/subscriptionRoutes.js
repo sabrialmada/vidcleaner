@@ -296,13 +296,15 @@ router.post('/create-checkout-session', authenticateToken, limiter, async (req, 
       payment_method_types: ['card'],
       mode: 'subscription',
       line_items: [{
-        price: process.env.STRIPE_PRICE_ID, // Your price ID from Stripe
+        price: process.env.STRIPE_PRICE_ID,
         quantity: 1,
       }],
       success_url: `${process.env.FRONTEND_URL}/dashboard?success=true`,
       cancel_url: `${process.env.FRONTEND_URL}/subscription?canceled=true`,
       client_reference_id: user.id,
-      customer_email: user.email,
+      metadata: {
+        userId: user.id
+      }
     });
 
     res.json({ url: session.url });

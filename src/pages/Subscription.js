@@ -249,7 +249,7 @@ const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'https://vidcleaner-p
 
 const Subscription = () => {
   useEffect(() => {
-    const initiateCheckout = async () => {
+    const createCheckoutSession = async () => {
       try {
         const token = localStorage.getItem('token');
         if (!token) {
@@ -257,7 +257,6 @@ const Subscription = () => {
           return;
         }
 
-        // Create a checkout session that includes user data
         const response = await axios.post(
           `${API_BASE_URL}/api/subscriptions/create-checkout-session`,
           {},
@@ -268,20 +267,19 @@ const Subscription = () => {
           }
         );
 
-        // Redirect to Stripe's checkout
         window.location.href = response.data.url;
       } catch (error) {
-        console.error('Error initiating checkout:', error);
+        console.error('Error creating checkout session:', error);
       }
     };
 
-    initiateCheckout();
+    createCheckoutSession();
   }, []);
 
   return (
     <div className="subscription-container">
       <div className="subscription-card">
-        <h2>Redirecting to checkout...</h2>
+        <h2>Redirecting to secure checkout...</h2>
       </div>
     </div>
   );
