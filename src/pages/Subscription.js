@@ -242,44 +242,18 @@ const Subscription = () => {
 export default Subscription; */
 
 import React, { useEffect } from 'react';
-import axios from 'axios';
 import './Subscription.css';
-
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'https://vidcleaner-production.up.railway.app';
 
 const Subscription = () => {
   useEffect(() => {
-    const createCheckoutSession = async () => {
-      try {
-        const token = localStorage.getItem('token');
-        if (!token) {
-          window.location.href = '/login';
-          return;
-        }
-
-        const response = await axios.post(
-          `${API_BASE_URL}/api/subscriptions/create-checkout-session`,
-          {},
-          {
-            headers: {
-              'Authorization': `Bearer ${token}`
-            }
-          }
-        );
-
-        window.location.href = response.data.url;
-      } catch (error) {
-        console.error('Error creating checkout session:', error);
-      }
-    };
-
-    createCheckoutSession();
+    // Direct redirect to test mode checkout
+    window.location.href = 'https://buy.stripe.com/test_5kA17L1uTdqP0V2bII';
   }, []);
 
   return (
     <div className="subscription-container">
       <div className="subscription-card">
-        <h2>Redirecting to secure checkout...</h2>
+        <h2>Redirecting to checkout...</h2>
       </div>
     </div>
   );

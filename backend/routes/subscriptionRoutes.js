@@ -428,18 +428,20 @@ router.post('/webhook', express.raw({type: 'application/json'}), async (req, res
   let event;
 
   try {
+    console.log('Received webhook with signature:', sig);
+    console.log('Webhook secret:', process.env.STRIPE_WEBHOOK_SECRET ? 'Present' : 'Missing');
+
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    logger.error('Webhook signature verification failed:', { error: err.message });
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
+    console.log('Webhook event constructed:', event.type);
 
-  logger.info('Received Stripe webhook event:', { type: event.type });
-
-  try {
     switch (event.type) {
       case 'checkout.session.completed':
         const session = event.data.object;
+        console.log('Processing checkout session:', {
+          email: session.customer_details?.email,
+          customerId: session.customer,
+          subscriptionId: session.subscription
+        });
         await handleCheckoutSessionCompleted(session);
         break;
       case 'invoice.payment_succeeded':
@@ -457,9 +459,9 @@ router.post('/webhook', express.raw({type: 'application/json'}), async (req, res
     }
 
     res.json({received: true});
-  } catch (error) {
-    logger.error('Error processing webhook:', { error: error.message });
-    res.status(500).send(`Webhook Error: ${error.message}`);
+  } catch (err) {
+    console.error('Webhook error:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 });
 
@@ -531,19 +533,43 @@ async function updateUserSubscription(user, subscription) {
 
 async function handleCheckoutSessionCompleted(session) {
   try {
-    // Find user by email since it's guaranteed to be present
-    const user = await User.findOne({ email: session.customer_details.email });
+    console.log('Checkout session data:', {
+      customerEmail: session.customer_details?.email,
+      customerId: session.customer,
+      subscriptionId: session.subscription,
+      clientReferenceId: session.client_reference_id
+    });
+
+    // Try to find user by multiple methods
+    let user = null;
     
-    if (!user) {
-      logger.error('User not found for checkout session:', { 
-        sessionId: session.id,
-        email: session.customer_details.email 
+    if (session.client_reference_id) {
+      user = await User.findById(session.client_reference_id);
+      console.log('Looking up user by client_reference_id:', {
+        found: !!user,
+        id: session.client_reference_id
       });
+    }
+
+    if (!user && session.customer_details?.email) {
+      user = await User.findOne({ email: session.customer_details.email });
+      console.log('Looking up user by email:', {
+        found: !!user,
+        email: session.customer_details.email
+      });
+    }
+
+    if (!user) {
+      console.error('User not found for checkout session');
       return;
     }
 
     // Get subscription details
     const subscription = await stripe.subscriptions.retrieve(session.subscription);
+    console.log('Retrieved subscription:', {
+      status: subscription.status,
+      currentPeriodEnd: subscription.current_period_end
+    });
 
     // Update user subscription details
     user.stripeCustomerId = session.customer;
@@ -555,13 +581,13 @@ async function handleCheckoutSessionCompleted(session) {
     user.subscriptionAmount = 29.00;
 
     await user.save();
-
-    logger.info('User subscription activated from checkout session', { 
+    console.log('User subscription updated successfully:', {
       userId: user.id,
-      subscriptionId: subscription.id 
+      status: user.subscriptionStatus
     });
+
   } catch (error) {
-    logger.error('Error handling checkout session completion:', {
+    console.error('Error in handleCheckoutSessionCompleted:', {
       error: error.message,
       sessionId: session.id
     });
