@@ -492,6 +492,7 @@ const Subscription = lazy(() => import('./pages/Subscription'));
 
 function App() {
   const [userEmail, setUserEmail] = useState(null);
+  const [isSubscribed, setIsSubscribed] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -501,8 +502,29 @@ function App() {
     }
   }, []);
 
+  // Handle successful subscription
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const success = urlParams.get('success');
+    const canceled = urlParams.get('canceled');
+
+    if (success === 'true') {
+      // Clear the URL parameters
+      window.history.replaceState({}, document.title, window.location.pathname);
+      // Update subscription status
+      setIsSubscribed(true);
+      // Optionally show a success message
+    } else if (canceled === 'true') {
+      // Clear the URL parameters
+      window.history.replaceState({}, document.title, window.location.pathname);
+      // Handle canceled subscription
+      navigate('/subscription');
+    }
+  }, [navigate]);
+
   const handleLogout = () => {
     setUserEmail(null);
+    setIsSubscribed(null);
     localStorage.removeItem('token');
     localStorage.removeItem('userEmail');
     navigate('/');
@@ -516,11 +538,15 @@ function App() {
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login setUserEmail={setUserEmail} />} />
           <Route path="/register" element={<Register setUserEmail={setUserEmail} />} />
-          <Route path="/terms-and-conditions" element={<TermsAndConditions />} /> 
+          
+          {/* Public routes */}
+          <Route path="/terms-and-conditions" element={<TermsAndConditions />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/refund-policy" element={<RefundPolicy />} />
           <Route path="/subscription-policy" element={<SubscriptionPolicy />} />
-          <Route path="/dmca-policy" element={<DMCAPolicy />} />          
+          <Route path="/dmca-policy" element={<DMCAPolicy />} />
+          
+          {/* Protected routes */}
           <Route path="/subscription" element={
             <ProtectedRoute>
               <Subscription />
@@ -534,7 +560,7 @@ function App() {
           
           {/* Protected Dashboard Layout with nested routes */}
           <Route path="/dashboard" element={
-            <ProtectedRoute>
+            <ProtectedRoute isSubscriptionRequired={true}>
               <DashboardLayout />
             </ProtectedRoute>
           }>
