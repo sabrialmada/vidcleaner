@@ -7,6 +7,7 @@ const ProtectedRoute = ({ children, requiresSubscription = false }) => {
   const location = useLocation();
   const [isSubscribed, setIsSubscribed] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
+  const currentPath = location.pathname;
 
   React.useEffect(() => {
     const checkSubscription = async () => {
@@ -15,8 +16,8 @@ const ProtectedRoute = ({ children, requiresSubscription = false }) => {
         return;
       }
 
-      // Only check subscription if required
-      if (requiresSubscription) {
+      // Only check subscription for feature routes
+      if (currentPath.includes('/dashboard/cleaner') || currentPath.includes('/dashboard/scraper')) {
         try {
           const response = await axios.get(
             `${process.env.REACT_APP_API_BASE_URL}/api/subscriptions/status`,
@@ -28,12 +29,15 @@ const ProtectedRoute = ({ children, requiresSubscription = false }) => {
         } catch (error) {
           console.error('Error checking subscription:', error);
         }
+      } else {
+        // For non-feature routes, don't check subscription
+        setIsSubscribed(true);
       }
       setLoading(false);
     };
 
     checkSubscription();
-  }, [token, requiresSubscription]);
+  }, [token, currentPath]);
 
   if (loading) {
     return <div>Loading...</div>;
@@ -43,13 +47,13 @@ const ProtectedRoute = ({ children, requiresSubscription = false }) => {
     return <Navigate to="/login" state={{ from: location }} />;
   }
 
-  // If on subscription page, don't check subscription status
+  // If on subscription page, always allow access
   if (location.pathname === '/subscription') {
     return children;
   }
 
-  // Only check subscription if the route requires it
-  if (requiresSubscription && !isSubscribed) {
+  // Only check subscription for feature routes
+  if ((currentPath.includes('/dashboard/cleaner') || currentPath.includes('/dashboard/scraper')) && !isSubscribed) {
     return <Navigate to="/subscription" state={{ from: location }} />;
   }
 
