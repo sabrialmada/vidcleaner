@@ -432,29 +432,30 @@ router.post('/webhook', express.raw({type: 'application/json'}), async (req, res
     console.log('Webhook secret:', process.env.STRIPE_WEBHOOK_SECRET ? 'Present' : 'Missing');
 
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-    console.log('Webhook event constructed:', event.type);
+    console.log('Webhook event constructed:', event.type, 'with data:', JSON.stringify(event.data.object));
 
     switch (event.type) {
-      case 'checkout.session.completed':
-        const session = event.data.object;
-        console.log('Processing checkout session:', {
-          email: session.customer_details?.email,
-          customerId: session.customer,
-          subscriptionId: session.subscription
-        });
-        await handleCheckoutSessionCompleted(session);
+      case 'payment_intent.succeeded':
+        console.log('Payment intent succeeded, retrieving customer info...');
+        const paymentIntent = event.data.object;
+        if (paymentIntent.customer) {
+          const customer = await stripe.customers.retrieve(paymentIntent.customer);
+          console.log('Found customer:', customer.email);
+          await handleCustomerPaymentSuccess(customer.email);
+        }
         break;
+
       case 'invoice.payment_succeeded':
-        await handlePaymentSucceeded(event.data.object);
+        console.log('Invoice payment succeeded');
+        const invoice = event.data.object;
+        await handlePaymentSucceeded(invoice);
         break;
-      case 'invoice.payment_failed':
-        await handlePaymentFailed(event.data.object);
-        break;
-      case 'customer.subscription.deleted':
-        await handleSubscriptionDeleted(event.data.object);
-        break;
+
+      case 'customer.subscription.created':
       case 'customer.subscription.updated':
-        await handleSubscriptionUpdated(event.data.object);
+        console.log('Subscription event received');
+        const subscription = event.data.object;
+        await handleSubscriptionUpdate(subscription);
         break;
     }
 
@@ -465,14 +466,54 @@ router.post('/webhook', express.raw({type: 'application/json'}), async (req, res
   }
 });
 
-async function handlePaymentSucceeded(invoice) {
-  logger.info('Payment succeeded for subscription:', { subscriptionId: invoice.subscription });
-  const user = await User.findOne({ stripeSubscriptionId: invoice.subscription });
-  if (user) {
+async function handleCustomerPaymentSuccess(customerEmail) {
+  try {
+    const user = await User.findOne({ email: customerEmail });
+    if (!user) {
+      console.error('User not found for email:', customerEmail);
+      return;
+    }
+
     user.subscriptionStatus = 'active';
+    user.subscriptionStartDate = new Date();
+    // Set end date to 30 days from now as a fallback
+    user.subscriptionEndDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    await user.save();
+
+    console.log('User subscription activated:', {
+      userId: user.id,
+      email: user.email,
+      status: user.subscriptionStatus
+    });
+  } catch (error) {
+    console.error('Error in handleCustomerPaymentSuccess:', error);
+  }
+}
+
+async function handlePaymentSucceeded(invoice) {
+  try {
+    console.log('Processing invoice payment success:', {
+      customerEmail: invoice.customer_email,
+      subscriptionId: invoice.subscription
+    });
+
+    const user = await User.findOne({ email: invoice.customer_email });
+    if (!user) {
+      console.error('User not found for invoice:', invoice.customer_email);
+      return;
+    }
+
+    user.subscriptionStatus = 'active';
+    user.stripeSubscriptionId = invoice.subscription;
     user.subscriptionEndDate = new Date(invoice.lines.data[0].period.end * 1000);
     await user.save();
-    logger.info('User subscription status updated to active', { userId: user.id });
+
+    console.log('User subscription updated via invoice:', {
+      userId: user.id,
+      status: user.subscriptionStatus
+    });
+  } catch (error) {
+    console.error('Error in handlePaymentSucceeded:', error);
   }
 }
 
