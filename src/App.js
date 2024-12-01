@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import Header from './components/Header/Header';
@@ -18,7 +16,6 @@ import SubscriptionPolicy from './pages/Terms/SubscriptionPolicy';
 import DMCAPolicy from './pages/Terms/DMCAPolicy';
 import './App.css';
 
-// Lazy load the Subscription component
 const Subscription = lazy(() => import('./pages/Subscription'));
 
 function App() {
@@ -33,22 +30,16 @@ function App() {
     }
   }, []);
 
-  // Handle successful subscription
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const success = urlParams.get('success');
     const canceled = urlParams.get('canceled');
 
     if (success === 'true') {
-      // Clear the URL parameters
       window.history.replaceState({}, document.title, window.location.pathname);
-      // Update subscription status
       setIsSubscribed(true);
-      // Optionally show a success message
     } else if (canceled === 'true') {
-      // Clear the URL parameters
       window.history.replaceState({}, document.title, window.location.pathname);
-      // Handle canceled subscription
       navigate('/subscription');
     }
   }, [navigate]);
@@ -66,11 +57,10 @@ function App() {
       <Header userEmail={userEmail} onLogout={handleLogout} />
       <Suspense fallback={<div>Loading...</div>}>
         <Routes>
+          {/* Public routes */}
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login setUserEmail={setUserEmail} />} />
           <Route path="/register" element={<Register setUserEmail={setUserEmail} />} />
-          
-          {/* Public routes */}
           <Route path="/terms-and-conditions" element={<TermsAndConditions />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/refund-policy" element={<RefundPolicy />} />
@@ -89,24 +79,26 @@ function App() {
             </ProtectedRoute>
           } />
           
-          {/* Dashboard doesn't require subscription initially */}
-          <Route path="/dashboard" element={
+          {/* Dashboard route - no subscription check */}
+          <Route path="/dashboard/*" element={
             <ProtectedRoute>
-              <DashboardLayout />
+              <Routes>
+                <Route path="/" element={<DashboardLayout />}>
+                  {/* Features with subscription check */}
+                  <Route path="cleaner/video" element={
+                    <ProtectedRoute checkSubscription>
+                      <VideoCleaner />
+                    </ProtectedRoute>
+                  } />
+                  <Route path="scraper/reel" element={
+                    <ProtectedRoute checkSubscription>
+                      <InstagramReel />
+                    </ProtectedRoute>
+                  } />
+                </Route>
+              </Routes>
             </ProtectedRoute>
-          }>
-            {/* Feature routes require subscription */}
-            <Route path="cleaner/video" element={
-              <ProtectedRoute requiresSubscription={true}>
-                <VideoCleaner />
-              </ProtectedRoute>
-            } />
-            <Route path="scraper/reel" element={
-              <ProtectedRoute requiresSubscription={true}>
-                <InstagramReel />
-              </ProtectedRoute>
-            } />
-          </Route>
+          } />
         </Routes>
       </Suspense>
     </div>
