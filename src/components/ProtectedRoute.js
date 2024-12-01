@@ -1,9 +1,8 @@
-// components/ProtectedRoute.js
 import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 
-const ProtectedRoute = ({ children }) => {
+const ProtectedRoute = ({ children, requiresSubscription = false }) => {
   const token = localStorage.getItem('token');
   const location = useLocation();
   const [isSubscribed, setIsSubscribed] = React.useState(null);
@@ -16,22 +15,25 @@ const ProtectedRoute = ({ children }) => {
         return;
       }
 
-      try {
-        const response = await axios.get(
-          `${process.env.REACT_APP_API_BASE_URL}/api/subscriptions/status`,
-          {
-            headers: { Authorization: `Bearer ${token}` }
-          }
-        );
-        setIsSubscribed(response.data.isSubscribed);
-      } catch (error) {
-        console.error('Error checking subscription:', error);
+      // Only check subscription if required
+      if (requiresSubscription) {
+        try {
+          const response = await axios.get(
+            `${process.env.REACT_APP_API_BASE_URL}/api/subscriptions/status`,
+            {
+              headers: { Authorization: `Bearer ${token}` }
+            }
+          );
+          setIsSubscribed(response.data.isSubscribed);
+        } catch (error) {
+          console.error('Error checking subscription:', error);
+        }
       }
       setLoading(false);
     };
 
     checkSubscription();
-  }, [token]);
+  }, [token, requiresSubscription]);
 
   if (loading) {
     return <div>Loading...</div>;
@@ -46,8 +48,8 @@ const ProtectedRoute = ({ children }) => {
     return children;
   }
 
-  // If not subscribed and not on subscription page, redirect to subscription
-  if (!isSubscribed) {
+  // Only check subscription if the route requires it
+  if (requiresSubscription && !isSubscribed) {
     return <Navigate to="/subscription" state={{ from: location }} />;
   }
 

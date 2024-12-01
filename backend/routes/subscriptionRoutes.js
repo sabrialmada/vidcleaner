@@ -1,210 +1,4 @@
-/* const express = require('express');
-const router = express.Router();
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-const User = require('../models/User');
-const authenticateToken = require('../middleware/authenticateToken');
 
-// Check subscription status
-router.get('/status', authenticateToken, async (req, res) => {
-  try {
-    console.log('Checking subscription status for user:', req.user.id);
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      console.log('User not found in database');
-      return res.status(404).json({ message: 'User not found' });
-    }
-    console.log('User found:', user);
-    const isSubscribed = user.subscriptionStatus === 'active';
-    console.log('Is user subscribed?', isSubscribed);
-    res.json({ 
-      isSubscribed, 
-      subscriptionStatus: user.subscriptionStatus,
-      subscriptionEndDate: user.subscriptionEndDate
-    });
-  } catch (error) {
-    console.error('Error checking subscription status:', error);
-    res.status(500).json({ message: 'Error checking subscription status' });
-  }
-});
-
-// Create a subscription
-router.post('/create', authenticateToken, async (req, res) => {
-  try {
-    const { paymentMethodId } = req.body;
-    const user = await User.findById(req.user.id);
-
-    let customer;
-    if (user.stripeCustomerId) {
-      try {
-        customer = await stripe.customers.retrieve(user.stripeCustomerId);
-      } catch (error) {
-        if (error.code === 'resource_missing') {
-          customer = await stripe.customers.create({
-            email: user.email,
-            payment_method: paymentMethodId,
-            invoice_settings: { default_payment_method: paymentMethodId },
-            metadata: { userId: user.id }
-          });
-          user.stripeCustomerId = customer.id;
-          await user.save();
-        } else {
-          throw error;
-        }
-      }
-    } else {
-      customer = await stripe.customers.create({
-        email: user.email,
-        payment_method: paymentMethodId,
-        invoice_settings: { default_payment_method: paymentMethodId },
-        metadata: { userId: user.id }
-      });
-      user.stripeCustomerId = customer.id;
-      await user.save();
-    }
-
-    const subscription = await stripe.subscriptions.create({
-      customer: customer.id,
-      items: [{ price: process.env.STRIPE_PRICE_ID }],
-      default_payment_method: paymentMethodId,
-      payment_behavior: 'default_incomplete',
-      expand: ['latest_invoice.payment_intent']
-    });
-
-    user.subscriptionStatus = 'pending';
-    user.stripeSubscriptionId = subscription.id;
-    user.subscriptionEndDate = new Date(subscription.current_period_end * 1000);
-    user.subscriptionStartDate = new Date();
-    user.subscriptionPlan = 'Monthly';
-    user.subscriptionAmount = 49.00;
-    await user.save();
-
-    res.json({
-      subscriptionId: subscription.id,
-      clientSecret: subscription.latest_invoice.payment_intent.client_secret
-    });
-  } catch (error) {
-    console.error('Subscription creation error:', error);
-    res.status(500).json({ message: 'Error creating subscription', error: error.message });
-  }
-});
-
-// Cancel subscription
-router.post('/cancel', authenticateToken, async (req, res) => {
-  try {
-    console.log('Cancelling subscription for user:', req.user.id);
-    const user = await User.findById(req.user.id);
-
-    if (!user) {
-      console.log('User not found in database');
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    if (user.subscriptionStatus !== 'active') {
-      console.log('No active subscription to cancel');
-      return res.status(400).json({ message: 'No active subscription to cancel' });
-    }
-
-    console.log('Updating Stripe subscription');
-    const subscription = await stripe.subscriptions.update(user.stripeSubscriptionId, {
-      cancel_at_period_end: true
-    });
-
-    console.log('Updating user subscription status');
-    user.subscriptionStatus = 'cancelling';
-    // Keep the subscriptionEndDate as is, since it will be valid until the end of the current period
-    await user.save();
-
-    console.log('Subscription cancelled successfully');
-    res.json({ message: 'Subscription will be cancelled at the end of the billing period' });
-  } catch (error) {
-    console.error('Error cancelling subscription:', error);
-    res.status(500).json({ message: 'Error cancelling subscription' });
-  }
-});
-
-// Webhook to handle subscription status updates
-router.post('/webhook', express.raw({type: 'application/json'}), async (req, res) => {
-  const sig = req.headers['stripe-signature'];
-  let event;
-
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    console.error('Webhook signature verification failed:', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  console.log('Received Stripe webhook event:', event.type);
-
-  try {
-    switch (event.type) {
-      case 'invoice.payment_succeeded':
-        await handlePaymentSucceeded(event.data.object);
-        break;
-      case 'invoice.payment_failed':
-        await handlePaymentFailed(event.data.object);
-        break;
-      case 'customer.subscription.deleted':
-        await handleSubscriptionDeleted(event.data.object);
-        break;
-      case 'customer.subscription.updated':
-        await handleSubscriptionUpdated(event.data.object);
-        break;
-    }
-
-    res.json({received: true});
-  } catch (error) {
-    console.error('Error processing webhook:', error);
-    res.status(500).send(`Webhook Error: ${error.message}`);
-  }
-});
-
-async function handlePaymentSucceeded(invoice) {
-  console.log('Payment succeeded for subscription:', invoice.subscription);
-  const user = await User.findOne({ stripeSubscriptionId: invoice.subscription });
-  if (user) {
-    user.subscriptionStatus = 'active';
-    user.subscriptionEndDate = new Date(invoice.lines.data[0].period.end * 1000);
-    await user.save();
-    console.log('User subscription status updated to active and end date updated');
-  }
-}
-
-async function handlePaymentFailed(invoice) {
-  console.log('Payment failed for subscription:', invoice.subscription);
-  const user = await User.findOne({ stripeSubscriptionId: invoice.subscription });
-  if (user) {
-    user.subscriptionStatus = 'inactive';
-    // Don't change the subscriptionEndDate here, as they might still pay before it expires
-    await user.save();
-    console.log('User subscription status updated to inactive');
-  }
-}
-
-async function handleSubscriptionDeleted(subscription) {
-  console.log('Subscription deleted:', subscription.id);
-  const user = await User.findOne({ stripeSubscriptionId: subscription.id });
-  if (user) {
-    user.subscriptionStatus = 'inactive';
-    user.stripeSubscriptionId = null;
-    user.subscriptionEndDate = null;
-    await user.save();
-    console.log('User subscription status updated to inactive, ID removed, and end date cleared');
-  }
-}
-
-async function handleSubscriptionUpdated(subscription) {
-  console.log('Subscription updated:', subscription.id);
-  const user = await User.findOne({ stripeSubscriptionId: subscription.id });
-  if (user) {
-    user.subscriptionStatus = subscription.status;
-    user.subscriptionEndDate = new Date(subscription.current_period_end * 1000);
-    await user.save();
-    console.log('User subscription status and end date updated');
-  }
-}
-
-module.exports = router; */
 
 
 // FOR PRODUCTION 
@@ -290,7 +84,7 @@ router.post('/create-checkout-session', authenticateToken, limiter, async (req, 
       await user.save();
     }
 
-    // Create the session
+    // Create the session with client_reference_id
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       payment_method_types: ['card'],
@@ -301,9 +95,9 @@ router.post('/create-checkout-session', authenticateToken, limiter, async (req, 
       }],
       success_url: `${process.env.FRONTEND_URL}/dashboard?success=true`,
       cancel_url: `${process.env.FRONTEND_URL}/subscription?canceled=true`,
-      client_reference_id: user.id,
+      client_reference_id: user.id, // This is crucial for identifying the user
       metadata: {
-        userId: user.id
+        userId: user.id // Backup identification method
       }
     });
 
@@ -432,28 +226,20 @@ router.post('/webhook', express.raw({type: 'application/json'}), async (req, res
     console.log('Webhook secret:', process.env.STRIPE_WEBHOOK_SECRET ? 'Present' : 'Missing');
 
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-    console.log('Webhook event constructed:', event.type, 'with data:', JSON.stringify(event.data.object));
+    console.log('Webhook event constructed:', event.type);
 
     switch (event.type) {
-      case 'payment_intent.succeeded':
-        console.log('Payment intent succeeded, retrieving customer info...');
-        const paymentIntent = event.data.object;
-        if (paymentIntent.customer) {
-          const customer = await stripe.customers.retrieve(paymentIntent.customer);
-          console.log('Found customer:', customer.email);
-          await handleCustomerPaymentSuccess(customer.email);
-        }
-        break;
-
-      case 'invoice.payment_succeeded':
-        console.log('Invoice payment succeeded');
-        const invoice = event.data.object;
-        await handlePaymentSucceeded(invoice);
+      case 'checkout.session.completed':
+        const session = event.data.object;
+        console.log('Processing checkout session:', {
+          customerEmail: session.customer_details?.email,
+          customerId: session.customer
+        });
+        await handlePaymentSuccess(session);
         break;
 
       case 'customer.subscription.created':
       case 'customer.subscription.updated':
-        console.log('Subscription event received');
         const subscription = event.data.object;
         await handleSubscriptionUpdate(subscription);
         break;
@@ -466,54 +252,39 @@ router.post('/webhook', express.raw({type: 'application/json'}), async (req, res
   }
 });
 
-async function handleCustomerPaymentSuccess(customerEmail) {
+async function handlePaymentSuccess(session) {
   try {
-    const user = await User.findOne({ email: customerEmail });
+    console.log('Payment success data:', {
+      customerEmail: session.customer_details?.email,
+      customerId: session.customer
+    });
+
+    // Try to find user by email
+    const user = await User.findOne({ 
+      email: session.customer_details?.email?.toLowerCase()
+    });
+
     if (!user) {
-      console.error('User not found for email:', customerEmail);
+      console.error('User not found for email:', session.customer_details?.email);
       return;
     }
 
+    // Update user subscription details
+    user.stripeCustomerId = session.customer;
     user.subscriptionStatus = 'active';
     user.subscriptionStartDate = new Date();
-    // Set end date to 30 days from now as a fallback
-    user.subscriptionEndDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-    await user.save();
+    user.subscriptionEndDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days from now
+    user.subscriptionPlan = 'Monthly';
+    user.subscriptionAmount = 29.00;
 
+    await user.save();
     console.log('User subscription activated:', {
       userId: user.id,
       email: user.email,
-      status: user.subscriptionStatus
+      status: 'active'
     });
   } catch (error) {
-    console.error('Error in handleCustomerPaymentSuccess:', error);
-  }
-}
-
-async function handlePaymentSucceeded(invoice) {
-  try {
-    console.log('Processing invoice payment success:', {
-      customerEmail: invoice.customer_email,
-      subscriptionId: invoice.subscription
-    });
-
-    const user = await User.findOne({ email: invoice.customer_email });
-    if (!user) {
-      console.error('User not found for invoice:', invoice.customer_email);
-      return;
-    }
-
-    user.subscriptionStatus = 'active';
-    user.stripeSubscriptionId = invoice.subscription;
-    user.subscriptionEndDate = new Date(invoice.lines.data[0].period.end * 1000);
-    await user.save();
-
-    console.log('User subscription updated via invoice:', {
-      userId: user.id,
-      status: user.subscriptionStatus
-    });
-  } catch (error) {
-    console.error('Error in handlePaymentSucceeded:', error);
+    console.error('Error in handlePaymentSuccess:', error);
   }
 }
 
@@ -570,69 +341,6 @@ async function updateUserSubscription(user, subscription) {
   user.subscriptionPlan = 'Monthly';
   user.subscriptionAmount = 29.00;
   await user.save();
-}
-
-async function handleCheckoutSessionCompleted(session) {
-  try {
-    console.log('Checkout session data:', {
-      customerEmail: session.customer_details?.email,
-      customerId: session.customer,
-      subscriptionId: session.subscription,
-      clientReferenceId: session.client_reference_id
-    });
-
-    // Try to find user by multiple methods
-    let user = null;
-    
-    if (session.client_reference_id) {
-      user = await User.findById(session.client_reference_id);
-      console.log('Looking up user by client_reference_id:', {
-        found: !!user,
-        id: session.client_reference_id
-      });
-    }
-
-    if (!user && session.customer_details?.email) {
-      user = await User.findOne({ email: session.customer_details.email });
-      console.log('Looking up user by email:', {
-        found: !!user,
-        email: session.customer_details.email
-      });
-    }
-
-    if (!user) {
-      console.error('User not found for checkout session');
-      return;
-    }
-
-    // Get subscription details
-    const subscription = await stripe.subscriptions.retrieve(session.subscription);
-    console.log('Retrieved subscription:', {
-      status: subscription.status,
-      currentPeriodEnd: subscription.current_period_end
-    });
-
-    // Update user subscription details
-    user.stripeCustomerId = session.customer;
-    user.stripeSubscriptionId = session.subscription;
-    user.subscriptionStatus = 'active';
-    user.subscriptionStartDate = new Date();
-    user.subscriptionEndDate = new Date(subscription.current_period_end * 1000);
-    user.subscriptionPlan = 'Monthly';
-    user.subscriptionAmount = 29.00;
-
-    await user.save();
-    console.log('User subscription updated successfully:', {
-      userId: user.id,
-      status: user.subscriptionStatus
-    });
-
-  } catch (error) {
-    console.error('Error in handleCheckoutSessionCompleted:', {
-      error: error.message,
-      sessionId: session.id
-    });
-  }
 }
 
 module.exports = router;
