@@ -20,7 +20,6 @@ const Subscription = lazy(() => import('./pages/Subscription'));
 
 function App() {
   const [userEmail, setUserEmail] = useState(null);
-  const [isSubscribed, setIsSubscribed] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -30,23 +29,8 @@ function App() {
     }
   }, []);
 
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const success = urlParams.get('success');
-    const canceled = urlParams.get('canceled');
-
-    if (success === 'true') {
-      window.history.replaceState({}, document.title, window.location.pathname);
-      setIsSubscribed(true);
-    } else if (canceled === 'true') {
-      window.history.replaceState({}, document.title, window.location.pathname);
-      navigate('/subscription');
-    }
-  }, [navigate]);
-
   const handleLogout = () => {
     setUserEmail(null);
-    setIsSubscribed(null);
     localStorage.removeItem('token');
     localStorage.removeItem('userEmail');
     navigate('/');
@@ -57,10 +41,11 @@ function App() {
       <Header userEmail={userEmail} onLogout={handleLogout} />
       <Suspense fallback={<div>Loading...</div>}>
         <Routes>
-          {/* Public routes */}
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login setUserEmail={setUserEmail} />} />
           <Route path="/register" element={<Register setUserEmail={setUserEmail} />} />
+          
+          {/* Public routes */}
           <Route path="/terms-and-conditions" element={<TermsAndConditions />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/refund-policy" element={<RefundPolicy />} />
@@ -79,26 +64,16 @@ function App() {
             </ProtectedRoute>
           } />
           
-          {/* Dashboard route - no subscription check */}
-          <Route path="/dashboard/*" element={
+          {/* Basic dashboard access without subscription check */}
+          <Route path="/dashboard" element={
             <ProtectedRoute>
-              <Routes>
-                <Route path="/" element={<DashboardLayout />}>
-                  {/* Features with subscription check */}
-                  <Route path="cleaner/video" element={
-                    <ProtectedRoute checkSubscription>
-                      <VideoCleaner />
-                    </ProtectedRoute>
-                  } />
-                  <Route path="scraper/reel" element={
-                    <ProtectedRoute checkSubscription>
-                      <InstagramReel />
-                    </ProtectedRoute>
-                  } />
-                </Route>
-              </Routes>
+              <DashboardLayout />
             </ProtectedRoute>
-          } />
+          } >
+            {/* Nested routes that require subscription */}
+            <Route path="cleaner/video" element={<VideoCleaner />} />
+            <Route path="scraper/reel" element={<InstagramReel />} />
+          </Route>
         </Routes>
       </Suspense>
     </div>
