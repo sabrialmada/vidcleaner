@@ -539,7 +539,7 @@ async function handleSubscriptionDeleted(subscription) {
   }
 }
 
-async function handleSubscriptionUpdated(subscription) {
+async function handleSubscriptionUpdate(subscription) {
   logger.info('Subscription updated:', { subscriptionId: subscription.id });
   const user = await User.findOne({ stripeSubscriptionId: subscription.id });
   if (user) {
