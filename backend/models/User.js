@@ -51,6 +51,11 @@ const UserSchema = new mongoose.Schema({
     type: String,
     default: 'Monthly'
   },
+  subscriptionStatus: {
+    type: String,
+    enum: ['inactive', 'active', 'pending', 'cancelled', 'cancelling'], 
+    default: 'inactive'
+  },
   subscriptionAmount: {
     type: Number,
     default: 29.00
