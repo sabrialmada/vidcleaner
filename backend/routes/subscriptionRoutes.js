@@ -181,6 +181,7 @@ router.post('/confirm', authenticateToken, limiter, async (req, res) => {
   });
 
 // Cancel subscription
+// Cancel subscription
 router.post('/cancel', authenticateToken, limiter, async (req, res) => {
   try {
     logger.info('Cancelling subscription for user:', { userId: req.user.id });
@@ -191,22 +192,53 @@ router.post('/cancel', authenticateToken, limiter, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    if (user.subscriptionStatus !== 'active') {
-      logger.warn('No active subscription to cancel', { userId: req.user.id });
-      return res.status(400).json({ message: 'No active subscription to cancel' });
+    if (!user.stripeSubscriptionId) {
+      logger.warn('No subscription ID found for user', { userId: req.user.id });
+      return res.status(400).json({ message: 'No active subscription found' });
     }
 
-    const subscription = await stripe.subscriptions.update(user.stripeSubscriptionId, {
-      cancel_at_period_end: true
-    });
+    try {
+      // First verify the subscription exists
+      const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
+      
+      // Then update it
+      await stripe.subscriptions.update(user.stripeSubscriptionId, {
+        cancel_at_period_end: true
+      });
 
-    user.subscriptionStatus = 'cancelling';
-    await user.save();
+      user.subscriptionStatus = 'cancelling';
+      await user.save();
 
-    logger.info('Subscription cancelled successfully', { userId: user.id, subscriptionId: subscription.id });
-    res.json({ message: 'Subscription will be cancelled at the end of the billing period' });
+      logger.info('Subscription cancelled successfully', { 
+        userId: user.id, 
+        subscriptionId: user.stripeSubscriptionId 
+      });
+      
+      res.json({ 
+        message: 'Subscription will be cancelled at the end of the billing period',
+        status: 'cancelling'
+      });
+    } catch (stripeError) {
+      logger.error('Stripe error during cancellation:', { 
+        error: stripeError.message,
+        userId: user.id,
+        subscriptionId: user.stripeSubscriptionId
+      });
+      
+      if (stripeError.code === 'resource_missing') {
+        user.subscriptionStatus = 'inactive';
+        user.stripeSubscriptionId = null;
+        await user.save();
+        return res.status(400).json({ message: 'Subscription not found in Stripe' });
+      }
+      
+      throw stripeError;
+    }
   } catch (error) {
-    logger.error('Error cancelling subscription:', { userId: req.user.id, error: error.message });
+    logger.error('Error cancelling subscription:', { 
+      userId: req.user.id, 
+      error: error.message 
+    });
     res.status(500).json({ message: 'Error cancelling subscription' });
   }
 });
