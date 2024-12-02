@@ -181,7 +181,6 @@ router.post('/confirm', authenticateToken, limiter, async (req, res) => {
   });
 
 // Cancel subscription
-// Cancel subscription
 router.post('/cancel', authenticateToken, limiter, async (req, res) => {
   try {
     logger.info('Cancelling subscription for user:', { userId: req.user.id });
@@ -297,7 +296,14 @@ router.post('/webhook', express.raw({type: 'application/json'}), async (req, res
         break;
 
       case 'customer.subscription.updated':
-        await handleSubscriptionUpdate(event.data.object);
+        const updatedSubscription = event.data.object;  // Changed variable name
+        console.log('Subscription update:', {
+          id: updatedSubscription.id,
+          status: updatedSubscription.status,
+          cancelAtPeriodEnd: updatedSubscription.cancel_at_period_end,
+          currentPeriodEnd: new Date(updatedSubscription.current_period_end * 1000)
+        });
+        await handleSubscriptionUpdate(updatedSubscription);
         break;
     }
 
@@ -389,10 +395,19 @@ async function handleSubscriptionUpdate(subscription) {
   logger.info('Subscription updated:', { subscriptionId: subscription.id });
   const user = await User.findOne({ stripeSubscriptionId: subscription.id });
   if (user) {
-    user.subscriptionStatus = subscription.status;
+    // Check if subscription is being cancelled but still active
+    if (subscription.cancel_at_period_end) {
+      user.subscriptionStatus = 'cancelling';
+    } else {
+      user.subscriptionStatus = subscription.status;
+    }
     user.subscriptionEndDate = new Date(subscription.current_period_end * 1000);
     await user.save();
-    logger.info('User subscription status and end date updated', { userId: user.id, status: subscription.status });
+    logger.info('User subscription status and end date updated', { 
+      userId: user.id, 
+      status: user.subscriptionStatus,
+      cancelAtPeriodEnd: subscription.cancel_at_period_end 
+    });
   }
 }
 
