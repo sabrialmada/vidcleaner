@@ -218,25 +218,54 @@ router.post('/webhook', express.raw({type: 'application/json'}), async (req, res
 
   try {
     console.log('Received webhook with signature:', sig);
-    console.log('Webhook secret:', process.env.STRIPE_WEBHOOK_SECRET ? 'Present' : 'Missing');
-
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-    console.log('Webhook event constructed:', event.type);
+    console.log('Webhook event constructed:', event.type, JSON.stringify(event.data.object));
 
     switch (event.type) {
       case 'checkout.session.completed':
         const session = event.data.object;
-        console.log('Processing checkout session:', {
-          customerEmail: session.customer_details?.email,
-          customerId: session.customer
+        // Get client_reference_id which contains user ID
+        const userId = session.client_reference_id;
+        console.log('Processing checkout completion:', { userId, customerEmail: session.customer_email });
+
+        const user = await User.findById(userId);
+        if (!user) {
+          console.error('User not found:', userId);
+          return res.json({received: true});
+        }
+
+        // Update user subscription details
+        user.stripeCustomerId = session.customer;
+        user.stripeSubscriptionId = session.subscription;
+        user.subscriptionStatus = 'active';
+        user.subscriptionStartDate = new Date();
+        user.subscriptionPlan = 'Monthly';
+        user.subscriptionAmount = 29.00;
+
+        // Get subscription end date from Stripe
+        const subscription = await stripe.subscriptions.retrieve(session.subscription);
+        user.subscriptionEndDate = new Date(subscription.current_period_end * 1000);
+
+        await user.save();
+        console.log('User subscription activated:', {
+          userId: user.id,
+          email: user.email,
+          status: 'active'
         });
-        await handlePaymentSuccess(session);
         break;
 
-      case 'customer.subscription.created':
+      case 'invoice.paid':
+      case 'invoice.payment_succeeded':
+        const invoice = event.data.object;
+        await handlePaymentSucceeded(invoice);
+        break;
+
+      case 'customer.subscription.deleted':
+        await handleSubscriptionDeleted(event.data.object);
+        break;
+
       case 'customer.subscription.updated':
-        const subscription = event.data.object;
-        await handleSubscriptionUpdate(subscription);
+        await handleSubscriptionUpdate(event.data.object);
         break;
     }
 
@@ -246,6 +275,25 @@ router.post('/webhook', express.raw({type: 'application/json'}), async (req, res
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 });
+
+async function handlePaymentSucceeded(invoice) {
+  try {
+    const subscription = await stripe.subscriptions.retrieve(invoice.subscription);
+    const user = await User.findOne({ stripeCustomerId: invoice.customer });
+    
+    if (user) {
+      user.subscriptionStatus = 'active';
+      user.subscriptionEndDate = new Date(subscription.current_period_end * 1000);
+      await user.save();
+      console.log('Subscription renewed:', {
+        userId: user.id,
+        subscriptionId: subscription.id
+      });
+    }
+  } catch (error) {
+    console.error('Error in handlePaymentSucceeded:', error);
+  }
+}
 
 async function handlePaymentSuccess(session) {
   try {
