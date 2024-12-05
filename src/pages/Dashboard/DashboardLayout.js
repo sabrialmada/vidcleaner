@@ -1,60 +1,3 @@
-/* import React from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
-import './Dashboard.css';
-
-const DashboardLayout = () => {
-  return (
-    <div className="dashboard-container">
-      <div className="dashboard-body">
-        <aside className="sidebar">
-          <ul>
-            <h3>METADATA CLEANER</h3>
-            <li><NavLink to="/dashboard/cleaner/video">Video Cleaner</NavLink></li>
-            <li><NavLink to="/dashboard/cleaner/image">Image Cleaner</NavLink></li>
-            <hr />
-            <h3>SCRAPER</h3>
-            <li><NavLink to="/dashboard/scraper/reel">Instagram Reel</NavLink></li>
-          </ul>
-        </aside>
-        <main className="main-content">
-          <Outlet /> 
-        </main>
-      </div>
-    </div>
-  );
-};
-
-export default DashboardLayout;
- */
-
-/* import React from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
-import './Dashboard.css';
-
-const DashboardLayout = () => {
-  return (
-    <div className="dashboard-container">
-      <div className="dashboard-body">
-        <aside className="sidebar">
-          <ul>
-            <h3>METADATA CLEANER</h3>
-            <li><NavLink to="/dashboard/cleaner/video">Video Cleaner</NavLink></li>
-            <li><NavLink to="/dashboard/cleaner/image">Image Cleaner</NavLink></li>
-            <hr />
-            <h3>SCRAPER</h3>
-            <li><NavLink to="/dashboard/scraper/reel">Instagram Reel</NavLink></li>
-          </ul>
-        </aside>
-        <main className="main-content">
-          <Outlet /> 
-        </main>
-      </div>
-    </div>
-  );
-};
-
-export default DashboardLayout;
- */
 
 import React from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
@@ -68,7 +11,7 @@ const DashboardLayout = () => {
           <ul>
             <h3>METADATA CLEANER</h3>
             <li>
-              <NavLink 
+              <NavLink
                 to="/dashboard/cleaner/video"
                 className={({ isActive }) => isActive ? 'active' : ''}>
                 Video Cleaner
@@ -84,7 +27,7 @@ const DashboardLayout = () => {
             <hr />
             <h3>SCRAPER</h3>
             <li>
-              <NavLink 
+              <NavLink
                 to="/dashboard/scraper/reel"
                 className={({ isActive }) => isActive ? 'active' : ''}>
                 Instagram Reel
@@ -93,7 +36,7 @@ const DashboardLayout = () => {
           </ul>
         </aside>
         <main className="main-content">
-          <Outlet /> {/* This will render the corresponding child routes */}
+          <Outlet /> {/* renders the corresponding child routes */}
         </main>
       </div>
     </div>

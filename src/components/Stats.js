@@ -12,9 +12,9 @@ const Stats = () => {
               {' '}VidCleaner
             </h2>
             <p className="stats-description">
-              This revolutionary software is saving creators 1000s of dollars a month. 
-              No need to film and edit all new content every month. Just Reuse old viral 
-              content with VidCleaner! So all we're doing is cleaning video data and 
+              This revolutionary software is saving creators 1000s of dollars a month.
+              No need to film and edit all new content every month. Just Reuse old viral
+              content with VidCleaner! So all we're doing is cleaning video data and
               making it new again. You reuse it and enjoy the free ReNewed Content!
             </p>
             <div className="stats-grid">

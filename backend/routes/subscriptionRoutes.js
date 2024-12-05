@@ -7,7 +7,7 @@ const authenticateToken = require('../middleware/authenticateToken');
 const { createLogger, format, transports } = require('winston');
 const rateLimit = require('express-rate-limit');
 
-// Setup Winston logger
+// setup winston logger
 const logger = createLogger({
   level: 'info',
   format: format.combine(
@@ -31,13 +31,13 @@ if (process.env.NODE_ENV !== 'production') {
   }));
 }
 
-// Rate limiting
+// rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
+  max: 100
 });
 
-// Check subscription status
+// check subscription status
 router.get('/status', authenticateToken, limiter, async (req, res) => {
   try {
     logger.info('Checking subscription status for user:', { userId: req.user.id });
@@ -48,8 +48,8 @@ router.get('/status', authenticateToken, limiter, async (req, res) => {
     }
     const isSubscribed = user.subscriptionStatus === 'active';
     logger.info('Subscription status retrieved', { userId: req.user.id, isSubscribed });
-    res.json({ 
-      isSubscribed, 
+    res.json({
+      isSubscribed,
       subscriptionStatus: user.subscriptionStatus,
       subscriptionEndDate: user.subscriptionEndDate
     });
@@ -59,7 +59,7 @@ router.get('/status', authenticateToken, limiter, async (req, res) => {
   }
 });
 
-// New route to create checkout session
+// new route to create checkout session
 router.post('/create-checkout-session', authenticateToken, limiter, async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
@@ -67,7 +67,7 @@ router.post('/create-checkout-session', authenticateToken, limiter, async (req, 
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Create or get customer
+    // create or get customer
     let customerId = user.stripeCustomerId;
     if (!customerId) {
       const customer = await stripe.customers.create({
@@ -79,7 +79,7 @@ router.post('/create-checkout-session', authenticateToken, limiter, async (req, 
       await user.save();
     }
 
-    // Create the session with client_reference_id
+    // create the session with client_reference_id
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       payment_method_types: ['card'],
@@ -90,9 +90,9 @@ router.post('/create-checkout-session', authenticateToken, limiter, async (req, 
       }],
       success_url: `${process.env.FRONTEND_URL}/dashboard?success=true`,
       cancel_url: `${process.env.FRONTEND_URL}/subscription?canceled=true`,
-      client_reference_id: user.id, // This is crucial for identifying the user
+      client_reference_id: user.id, // identifying the user
       metadata: {
-        userId: user.id // Backup identification method
+        userId: user.id // backup identification
       }
     });
 
@@ -103,7 +103,7 @@ router.post('/create-checkout-session', authenticateToken, limiter, async (req, 
   }
 });
 
-// Create a subscription
+// create a subscription
 router.post('/create', authenticateToken, limiter, async (req, res) => {
   try {
     const { paymentMethodId } = req.body;
@@ -145,42 +145,42 @@ router.post('/create', authenticateToken, limiter, async (req, res) => {
   }
 });
 
-// Confirm subscription
+// confirm subscription
 router.post('/confirm', authenticateToken, limiter, async (req, res) => {
-    try {
-      logger.info('Confirming subscription for user:', { userId: req.user.id });
-      const { subscriptionId } = req.body;
-      const user = await User.findById(req.user.id);
-  
-      if (!user) {
-        logger.warn('User not found in database', { userId: req.user.id });
-        return res.status(404).json({ message: 'User not found' });
-      }
-  
-      if (user.stripeSubscriptionId !== subscriptionId) {
-        logger.warn('Subscription ID mismatch', { userId: req.user.id, providedSubId: subscriptionId, userSubId: user.stripeSubscriptionId });
-        return res.status(400).json({ message: 'Invalid subscription ID' });
-      }
-  
-      // Here you might want to check the status with Stripe
-      const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-  
-      if (subscription.status === 'active') {
-        user.subscriptionStatus = 'active';
-        await user.save();
-        logger.info('Subscription confirmed successfully', { userId: user.id, subscriptionId });
-        res.json({ message: 'Subscription confirmed successfully' });
-      } else {
-        logger.warn('Subscription not active in Stripe', { userId: user.id, subscriptionId, status: subscription.status });
-        res.status(400).json({ message: 'Subscription is not active' });
-      }
-    } catch (error) {
-      logger.error('Error confirming subscription:', { userId: req.user.id, error: error.message });
-      res.status(500).json({ message: 'Error confirming subscription' });
-    }
-  });
+  try {
+    logger.info('Confirming subscription for user:', { userId: req.user.id });
+    const { subscriptionId } = req.body;
+    const user = await User.findById(req.user.id);
 
-// Cancel subscription
+    if (!user) {
+      logger.warn('User not found in database', { userId: req.user.id });
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (user.stripeSubscriptionId !== subscriptionId) {
+      logger.warn('Subscription ID mismatch', { userId: req.user.id, providedSubId: subscriptionId, userSubId: user.stripeSubscriptionId });
+      return res.status(400).json({ message: 'Invalid subscription ID' });
+    }
+
+    // check the status with stripe
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+
+    if (subscription.status === 'active') {
+      user.subscriptionStatus = 'active';
+      await user.save();
+      logger.info('Subscription confirmed successfully', { userId: user.id, subscriptionId });
+      res.json({ message: 'Subscription confirmed successfully' });
+    } else {
+      logger.warn('Subscription not active in Stripe', { userId: user.id, subscriptionId, status: subscription.status });
+      res.status(400).json({ message: 'Subscription is not active' });
+    }
+  } catch (error) {
+    logger.error('Error confirming subscription:', { userId: req.user.id, error: error.message });
+    res.status(500).json({ message: 'Error confirming subscription' });
+  }
+});
+
+// cancel subscription
 router.post('/cancel', authenticateToken, limiter, async (req, res) => {
   try {
     logger.info('Cancelling subscription for user:', { userId: req.user.id });
@@ -197,10 +197,10 @@ router.post('/cancel', authenticateToken, limiter, async (req, res) => {
     }
 
     try {
-      // First verify the subscription exists
+      // verify the subscription exists
       const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
-      
-      // Then update it
+
+      // update it
       await stripe.subscriptions.update(user.stripeSubscriptionId, {
         cancel_at_period_end: true
       });
@@ -208,42 +208,42 @@ router.post('/cancel', authenticateToken, limiter, async (req, res) => {
       user.subscriptionStatus = 'cancelling';
       await user.save();
 
-      logger.info('Subscription cancelled successfully', { 
-        userId: user.id, 
-        subscriptionId: user.stripeSubscriptionId 
+      logger.info('Subscription cancelled successfully', {
+        userId: user.id,
+        subscriptionId: user.stripeSubscriptionId
       });
-      
-      res.json({ 
+
+      res.json({
         message: 'Subscription will be cancelled at the end of the billing period',
         status: 'cancelling'
       });
     } catch (stripeError) {
-      logger.error('Stripe error during cancellation:', { 
+      logger.error('Stripe error during cancellation:', {
         error: stripeError.message,
         userId: user.id,
         subscriptionId: user.stripeSubscriptionId
       });
-      
+
       if (stripeError.code === 'resource_missing') {
         user.subscriptionStatus = 'inactive';
         user.stripeSubscriptionId = null;
         await user.save();
         return res.status(400).json({ message: 'Subscription not found in Stripe' });
       }
-      
+
       throw stripeError;
     }
   } catch (error) {
-    logger.error('Error cancelling subscription:', { 
-      userId: req.user.id, 
-      error: error.message 
+    logger.error('Error cancelling subscription:', {
+      userId: req.user.id,
+      error: error.message
     });
     res.status(500).json({ message: 'Error cancelling subscription' });
   }
 });
 
-// Webhook to handle subscription status updates
-router.post('/webhook', express.raw({type: 'application/json'}), async (req, res) => {
+// webhook to handle subscription status updates
+router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
 
@@ -255,17 +255,17 @@ router.post('/webhook', express.raw({type: 'application/json'}), async (req, res
     switch (event.type) {
       case 'checkout.session.completed':
         const session = event.data.object;
-        // Get client_reference_id which contains user ID
+        // get client_reference_id which contains user id
         const userId = session.client_reference_id;
         console.log('Processing checkout completion:', { userId, customerEmail: session.customer_email });
 
         const user = await User.findById(userId);
         if (!user) {
           console.error('User not found:', userId);
-          return res.json({received: true});
+          return res.json({ received: true });
         }
 
-        // Update user subscription details
+        // update user subscription details
         user.stripeCustomerId = session.customer;
         user.stripeSubscriptionId = session.subscription;
         user.subscriptionStatus = 'active';
@@ -273,7 +273,7 @@ router.post('/webhook', express.raw({type: 'application/json'}), async (req, res
         user.subscriptionPlan = 'Monthly';
         user.subscriptionAmount = 29.00;
 
-        // Get subscription end date from Stripe
+        // get subscription end date from stripe
         const subscription = await stripe.subscriptions.retrieve(session.subscription);
         user.subscriptionEndDate = new Date(subscription.current_period_end * 1000);
 
@@ -296,7 +296,7 @@ router.post('/webhook', express.raw({type: 'application/json'}), async (req, res
         break;
 
       case 'customer.subscription.updated':
-        const updatedSubscription = event.data.object;  // Changed variable name
+        const updatedSubscription = event.data.object;  // changed variable name
         console.log('Subscription update:', {
           id: updatedSubscription.id,
           status: updatedSubscription.status,
@@ -307,7 +307,7 @@ router.post('/webhook', express.raw({type: 'application/json'}), async (req, res
         break;
     }
 
-    res.json({received: true});
+    res.json({ received: true });
   } catch (err) {
     console.error('Webhook error:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
@@ -318,7 +318,7 @@ async function handlePaymentSucceeded(invoice) {
   try {
     const subscription = await stripe.subscriptions.retrieve(invoice.subscription);
     const user = await User.findOne({ stripeCustomerId: invoice.customer });
-    
+
     if (user) {
       user.subscriptionStatus = 'active';
       user.subscriptionEndDate = new Date(subscription.current_period_end * 1000);
@@ -340,8 +340,8 @@ async function handlePaymentSuccess(session) {
       customerId: session.customer
     });
 
-    // Try to find user by email
-    const user = await User.findOne({ 
+    // try to find user by email
+    const user = await User.findOne({
       email: session.customer_details?.email?.toLowerCase()
     });
 
@@ -350,7 +350,7 @@ async function handlePaymentSuccess(session) {
       return;
     }
 
-    // Update user subscription details
+    // update user subscription details
     user.stripeCustomerId = session.customer;
     user.subscriptionStatus = 'active';
     user.subscriptionStartDate = new Date();
@@ -395,7 +395,7 @@ async function handleSubscriptionUpdate(subscription) {
   logger.info('Subscription updated:', { subscriptionId: subscription.id });
   const user = await User.findOne({ stripeSubscriptionId: subscription.id });
   if (user) {
-    // Check if subscription is being cancelled but still active
+    // check if subscription is being cancelled but still active
     if (subscription.cancel_at_period_end) {
       user.subscriptionStatus = 'cancelling';
     } else {
@@ -403,10 +403,10 @@ async function handleSubscriptionUpdate(subscription) {
     }
     user.subscriptionEndDate = new Date(subscription.current_period_end * 1000);
     await user.save();
-    logger.info('User subscription status and end date updated', { 
-      userId: user.id, 
+    logger.info('User subscription status and end date updated', {
+      userId: user.id,
       status: user.subscriptionStatus,
-      cancelAtPeriodEnd: subscription.cancel_at_period_end 
+      cancelAtPeriodEnd: subscription.cancel_at_period_end
     });
   }
 }

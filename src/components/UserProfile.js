@@ -43,7 +43,7 @@ const UserProfile = () => {
       await axios.post(`${API_BASE_URL}/api/subscriptions/cancel`, {}, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      await fetchUserData(); // Refresh user data after cancellation
+      await fetchUserData(); // refresh user data after cancellation
     } catch (error) {
       console.error('Error cancelling subscription:', error);
       setError('Failed to cancel subscription. Please try again.');
@@ -74,21 +74,21 @@ const UserProfile = () => {
         <p><strong>Member Since:</strong> {formatDate(user.createdAt)}</p>
       </div>
       <div className="profile-section">
-      <h3>Subscription Details</h3>
-      <p><strong>Status:</strong> <span className={`status ${user.subscriptionStatus}`}>
-        {user.subscriptionStatus === 'cancelling' ? 'Active (Cancels at period end)' : user.subscriptionStatus}
-      </span></p>
-      {(user.subscriptionStatus === 'active' || user.subscriptionStatus === 'cancelling') && (
-        <>
-          <p><strong>Plan:</strong> {user.subscriptionPlan}</p>
-          <p><strong>Next Billing Date:</strong> {getRenewalDate(user.subscriptionStartDate)}</p>
-          <p><strong>Amount:</strong> ${user.subscriptionAmount.toFixed(2)} USD</p>
-        </>
-      )}
-      {user.subscriptionEndDate && (
-        <p><strong>Subscription End Date:</strong> {formatDate(user.subscriptionEndDate)}</p>
-      )}
-    </div>
+        <h3>Subscription Details</h3>
+        <p><strong>Status:</strong> <span className={`status ${user.subscriptionStatus}`}>
+          {user.subscriptionStatus === 'cancelling' ? 'Active (Cancels at period end)' : user.subscriptionStatus}
+        </span></p>
+        {(user.subscriptionStatus === 'active' || user.subscriptionStatus === 'cancelling') && (
+          <>
+            <p><strong>Plan:</strong> {user.subscriptionPlan}</p>
+            <p><strong>Next Billing Date:</strong> {getRenewalDate(user.subscriptionStartDate)}</p>
+            <p><strong>Amount:</strong> ${user.subscriptionAmount.toFixed(2)} USD</p>
+          </>
+        )}
+        {user.subscriptionEndDate && (
+          <p><strong>Subscription End Date:</strong> {formatDate(user.subscriptionEndDate)}</p>
+        )}
+      </div>
       {user.subscriptionStatus === 'active' && user.lastFourDigits && (
         <div className="profile-section">
           <h3>Payment Method</h3>
@@ -97,16 +97,16 @@ const UserProfile = () => {
         </div>
       )}
       {user.subscriptionStatus === 'active' && (
-      <button onClick={handleCancelSubscription} className="cancel-subscription">
-        Cancel Subscription
-      </button>
-    )}
-    {!['active', 'cancelling'].includes(user.subscriptionStatus) && (
-      <button onClick={() => navigate('/subscription')} className="resubscribe">
-        Resubscribe
-      </button>
-    )}
-  </div>
+        <button onClick={handleCancelSubscription} className="cancel-subscription">
+          Cancel Subscription
+        </button>
+      )}
+      {!['active', 'cancelling'].includes(user.subscriptionStatus) && (
+        <button onClick={() => navigate('/subscription')} className="resubscribe">
+          Resubscribe
+        </button>
+      )}
+    </div>
   );
 };
 

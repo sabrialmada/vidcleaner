@@ -53,7 +53,7 @@ const UserSchema = new mongoose.Schema({
   },
   subscriptionStatus: {
     type: String,
-    enum: ['inactive', 'active', 'pending', 'cancelled', 'cancelling'], 
+    enum: ['inactive', 'active', 'pending', 'cancelled', 'cancelling'],
     default: 'inactive'
   },
   subscriptionAmount: {
@@ -64,23 +64,10 @@ const UserSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Index for faster queries
 UserSchema.index({ email: 1, stripeCustomerId: 1 });
 
-// Pre-save hook to hash password
-/* UserSchema.pre('save', async function(next) {
-  if (!this.isModified('password')) return next();
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    return next();
-  } catch (error) {
-    return next(error);
-  }
-}); */
-
-// Method to compare password for login
-UserSchema.methods.comparePassword = async function(candidatePassword) {
+// compare password for login
+UserSchema.methods.comparePassword = async function (candidatePassword) {
   try {
     return await bcrypt.compare(candidatePassword, this.password);
   } catch (error) {
@@ -88,8 +75,8 @@ UserSchema.methods.comparePassword = async function(candidatePassword) {
   }
 };
 
-// Method to get user information without sensitive data
-UserSchema.methods.getPublicProfile = function() {
+// get user information without sensitive data
+UserSchema.methods.getPublicProfile = function () {
   const userObject = this.toObject();
   delete userObject.password;
   delete userObject.stripeCustomerId;

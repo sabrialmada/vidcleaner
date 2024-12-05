@@ -8,7 +8,7 @@ if (!process.env.REDIS_URL) {
   process.exit(1);
 }
 
-// Redis configuration helpers
+// redis configuration 
 const parseRedisUrl = (url) => {
   try {
     const parsedUrl = new URL(url);
@@ -31,7 +31,7 @@ const redisClientConfig = {
   host: redisConfig.host,
   password: redisConfig.password,
   tls: process.env.NODE_ENV === 'production' ? redisConfig.tls : undefined,
-  retryStrategy: function(times) {
+  retryStrategy: function (times) {
     const delay = Math.min(times * 50, 2000);
     console.log(`Retrying Redis connection in ${delay}ms...`);
     return delay;
@@ -39,7 +39,7 @@ const redisClientConfig = {
   connectTimeout: 30000
 };
 
-// File cleanup helper
+// file cleanup 
 const handleJobCleanup = async (job) => {
   console.log(`Cleaning up job ${job.id}...`);
   try {
@@ -47,7 +47,7 @@ const handleJobCleanup = async (job) => {
     const outputPath = job.returnvalue?.outputPath;
     const tempFiles = job.data.tempFiles || [];
 
-    // Clean up all associated files
+    // clean up all files
     const filesToDelete = [
       inputPath,
       outputPath,
@@ -106,15 +106,15 @@ console.log('Initializing queue with Redis config:', {
 
 const videoQueue = new Queue('video-processing', process.env.REDIS_URL, queueOptions);
 
-// Job processing
+// job processing
 videoQueue.process(async (job) => {
   const { inputPath, outputPath } = job.data;
   let progressInterval;
   let timeoutTimer;
-  
+
   try {
     jobStateManager.markJobActive(job.id);
-    
+
     if (jobStateManager.isJobCancelled(job.id)) {
       throw new Error('Job cancelled before start');
     }
@@ -160,7 +160,7 @@ videoQueue.process(async (job) => {
     return { outputPath };
   } catch (error) {
     console.error(`Error processing job ${job.id}:`, error);
-    await handleJobCleanup(job).catch(cleanupError => 
+    await handleJobCleanup(job).catch(cleanupError =>
       console.error(`Cleanup error for job ${job.id}:`, cleanupError)
     );
     throw error;
@@ -171,7 +171,7 @@ videoQueue.process(async (job) => {
   }
 });
 
-// Event handlers
+// event handlers
 videoQueue.on('error', (error) => {
   console.error('Queue Error:', error);
 });
@@ -222,12 +222,12 @@ videoQueue.on('active', (job) => {
   jobStateManager.markJobActive(job.id);
 });
 
-// Graceful shutdown
+// shutdown
 process.on('SIGTERM', async () => {
   try {
     const activeJobs = await videoQueue.getActive();
     console.log(`Cleaning up ${activeJobs.length} active jobs...`);
-    
+
     await Promise.all(activeJobs.map(async (job) => {
       try {
         jobStateManager.markJobCancelled(job.id);

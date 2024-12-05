@@ -44,15 +44,15 @@ function App() {
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login setUserEmail={setUserEmail} />} />
           <Route path="/register" element={<Register setUserEmail={setUserEmail} />} />
-          
-          {/* Public routes */}
+
+          {/* public routes */}
           <Route path="/terms-and-conditions" element={<TermsAndConditions />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/refund-policy" element={<RefundPolicy />} />
           <Route path="/subscription-policy" element={<SubscriptionPolicy />} />
           <Route path="/dmca-policy" element={<DMCAPolicy />} />
-          
-          {/* Protected routes */}
+
+          {/* protected routes */}
           <Route path="/subscription" element={
             <ProtectedRoute>
               <Subscription />
@@ -63,14 +63,14 @@ function App() {
               <UserProfile />
             </ProtectedRoute>
           } />
-          
-          {/* Basic dashboard access without subscription check */}
+
+          {/* dashboard access without subscription check */}
           <Route path="/dashboard" element={
             <ProtectedRoute>
               <DashboardLayout />
             </ProtectedRoute>
           } >
-            {/* Nested routes that require subscription */}
+            {/* nested routes that require subscription */}
             <Route path="cleaner/video" element={<VideoCleaner />} />
             <Route path="scraper/reel" element={<InstagramReel />} />
           </Route>

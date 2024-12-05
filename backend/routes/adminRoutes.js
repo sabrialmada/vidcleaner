@@ -6,9 +6,9 @@ const router = express.Router();
 
 router.get('/check-uploads', async (req, res) => {
     try {
-        const uploadsDir = path.join(__dirname, '../uploads'); // Adjust this path as needed
+        const uploadsDir = path.join(__dirname, '../uploads');
         const files = await fs.readdir(uploadsDir);
-        
+
         const fileDetails = await Promise.all(files.map(async (file) => {
             const filePath = path.join(uploadsDir, file);
             const stats = await fs.stat(filePath);

@@ -17,14 +17,14 @@ const Subscription = () => {
           return;
         }
 
-        // Get the user's email to pass to Stripe
+        // get users email to pass to stripe
         const response = await axios.get(`${API_BASE_URL}/api/user/profile`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
         });
 
-        // Append user ID to Stripe checkout URL
+        // append user id to stripe checkout url
         const checkoutUrl = `${STRIPE_CHECKOUT_URL}?client_reference_id=${response.data._id}`;
         window.location.href = checkoutUrl;
       } catch (error) {

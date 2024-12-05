@@ -1,9 +1,8 @@
 
-
 const path = require('path');
 const dotenv = require('dotenv');
 
-// Load the correct environment file
+// load the correct environment file
 const envFile = process.env.NODE_ENV === 'production' ? '.env.production' : '.env';
 dotenv.config({ path: path.resolve(process.cwd(), envFile) });
 
@@ -19,7 +18,7 @@ const fs = require('fs').promises;
 const cron = require('node-cron');
 const Redis = require('ioredis');
 
-// Validate required environment variables
+// validate required environment variables
 const requiredEnvVars = [
   'REDIS_URL',
   'MONGODB_URI',
@@ -33,7 +32,7 @@ for (const envVar of requiredEnvVars) {
   }
 }
 
-// Parse Redis URL for better configuration
+// parse redis url for better configuration
 const parseRedisUrl = (url) => {
   try {
     const parsedUrl = new URL(url);
@@ -49,14 +48,14 @@ const parseRedisUrl = (url) => {
   }
 };
 
-// Debug environment information
+// debug environment information
 console.log('Environment:', {
   nodeEnv: process.env.NODE_ENV,
   hasRedisUrl: !!process.env.REDIS_URL,
   redisUrlStart: process.env.REDIS_URL ? `${process.env.REDIS_URL.slice(0, 8)}...` : 'not set'
 });
 
-// Initialize Redis with enhanced error handling
+// initialize redis with enhanced error handling
 let redis;
 try {
   const redisConfig = parseRedisUrl(process.env.REDIS_URL);
@@ -83,7 +82,6 @@ try {
 
   redis.on('error', (error) => {
     console.error('Redis connection error:', error);
-    // Don't exit on connection error, let retry strategy handle it
   });
 
   redis.on('ready', () => {
@@ -101,18 +99,18 @@ try {
 
 const app = express();
 
-app.use('/api/subscriptions/webhook', express.raw({type: 'application/json'}));
+app.use('/api/subscriptions/webhook', express.raw({ type: 'application/json' }));
 
-// Create uploads directory
+// create uploads directory
 const uploadsDir = path.join(__dirname, 'uploads');
 fs.mkdir(uploadsDir, { recursive: true })
   .then(() => console.log('Uploads directory created:', uploadsDir))
   .catch(err => console.error('Error creating uploads directory:', err));
 
-// Security middleware first
+// security middleware first
 app.use(helmet());
 
-// CORS configuration - immediately after security
+// CORS configuration
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production'
     ? ['https://vidcleaner.vercel.app', 'https://www.vidcleaner.com', 'https://vidcleaner.com']
@@ -128,7 +126,7 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// Other basic middleware
+// other basic middleware
 app.use(compression());
 app.use(morgan('combined'));
 
@@ -140,14 +138,14 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rate limiting configuration with Redis
+// rate limiting configuration with redis
 const limiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute window
   max: (req) => {
     if (req.path.includes('/api/job-status')) {
-      return 300; // Higher limit for job status checks
+      return 300; // higher limit for job status checks
     }
-    return 100; // Default limit for other routes
+    return 100; // default limit for other routes
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -158,11 +156,11 @@ const limiter = rateLimit({
 
 app.use(limiter);
 
-// Body parser setup
+// body parser setup
 app.use(bodyParser.json({ limit: '300mb' }));
 app.use(bodyParser.urlencoded({ limit: '300mb', extended: true }));
 
-// MongoDB connection with enhanced error handling
+// mongoDB connection with enhanced error handling
 const connectMongoDB = async () => {
   try {
     await mongoose.connect(process.env.MONGODB_URI, {
@@ -189,7 +187,7 @@ mongoose.connection.on('disconnected', () => {
 
 app.set('trust proxy', 1);
 
-// Import routes
+// routes
 const videoRoutes = require('./routes/videoRoutes');
 const reelRoutes = require('./routes/reelRoutes');
 const authRoutes = require('./routes/auth');
@@ -197,7 +195,7 @@ const subscriptionRoutes = require('./routes/subscriptionRoutes');
 const userRoutes = require('./routes/userRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 
-// Railway timeout adjustment
+// railway timeout adjustment
 app.use((req, res, next) => {
   req.socket.setTimeout(25 * 1000);
   res.setHeader('Connection', 'keep-alive');
@@ -205,13 +203,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// Add test endpoint for CORS
+// test endpoint for CORS
 app.options('/api/test-cors', cors(corsOptions));
 app.get('/api/test-cors', (req, res) => {
   res.json({ message: 'CORS is working' });
 });
 
-// Route handlers
+// route handlers
 app.use('/api', videoRoutes);
 app.use('/api', reelRoutes);
 app.use('/api/auth', authRoutes);
@@ -222,15 +220,15 @@ app.use('/admin', adminRoutes);
 const { videoQueue } = require('./queue');
 const { safeDelete } = require('./videoProcessor');
 
-// Queue event handlers
+// queue event handlers
 videoQueue.on('removed', async (job) => {
   console.log(`Job ${job.id} was removed, cleaning up...`);
   try {
     const { inputPath } = job.data;
     const { outputPath } = job.returnvalue || {};
 
-    if (inputPath) await safeDelete(inputPath).catch(() => {});
-    if (outputPath) await safeDelete(outputPath).catch(() => {});
+    if (inputPath) await safeDelete(inputPath).catch(() => { });
+    if (outputPath) await safeDelete(outputPath).catch(() => { });
   } catch (error) {
     console.error(`Error cleaning up removed job ${job.id}:`, error);
   }
@@ -246,8 +244,8 @@ videoQueue.on('failed', async (job, error) => {
     const { inputPath } = job.data;
     const { outputPath } = job.returnvalue || {};
 
-    if (inputPath) await safeDelete(inputPath).catch(() => {});
-    if (outputPath) await safeDelete(outputPath).catch(() => {});
+    if (inputPath) await safeDelete(inputPath).catch(() => { });
+    if (outputPath) await safeDelete(outputPath).catch(() => { });
   } catch (error) {
     console.error(`Error cleaning up failed job ${job.id}:`, error);
   }
@@ -257,7 +255,7 @@ videoQueue.on('progress', (job, progress) => {
   console.log(`Job ${job.id} is ${progress}% complete`);
 });
 
-// Improved cleanup function with error handling
+// cleanup 
 async function cleanupUploads() {
   try {
     const files = await fs.readdir(uploadsDir);
@@ -269,7 +267,7 @@ async function cleanupUploads() {
       try {
         const stats = await fs.stat(filePath);
         const fileAge = now - stats.mtimeMs;
-        
+
         if (fileAge > 3600000) { // 1 hour
           await fs.unlink(filePath);
           deletedCount++;
@@ -279,20 +277,20 @@ async function cleanupUploads() {
         console.error(`Error processing file ${file}:`, error);
       }
     }));
-    
+
     console.log(`Cleanup completed. Deleted ${deletedCount} files`);
   } catch (error) {
     console.error('Error during cleanup:', error);
   }
 }
 
-// Schedule cleanup
+// schedule cleanup
 cron.schedule('0 * * * *', () => {
   console.log('Running scheduled cleanup of uploads directory');
   cleanupUploads();
 });
 
-// Error handling middleware
+// error handling middleware
 app.use((err, req, res, next) => {
   console.error('Error:', err.message);
   console.error('Stack:', err.stack);
@@ -315,16 +313,16 @@ app.use((err, req, res, next) => {
   res.status(statusCode).json(errorResponse);
 });
 
-// 404 handler
+// 404
 app.use((req, res) => {
   res.status(404).json({ message: "Sorry, that route doesn't exist." });
 });
 
-// Server initialization
+// server initialization
 const PORT = process.env.PORT || 5000;
 let server = null;
 
-// Enhanced error handlers with server check
+// enhanced error handlers with server check
 function handleFatalError(error) {
   console.error('Fatal error occurred:', error);
   if (server) {
@@ -338,7 +336,7 @@ function handleFatalError(error) {
   }
 }
 
-// Process handlers
+// process handlers
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
   handleFatalError(error);
@@ -349,22 +347,22 @@ process.on('unhandledRejection', (reason, promise) => {
   handleFatalError(reason);
 });
 
-// Server startup with health checks
+// server startup with health checks
 async function startServer() {
   try {
-    // Verify Redis connection
+    // verify redis connection
     await redis.ping();
     console.log('Redis connection verified');
 
-    // Connect to MongoDB
+    // connect to mongoDB
     await connectMongoDB();
 
-    // Start HTTP server
+    // start http server
     server = app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
     });
 
-    // Set up server error handling
+    // set up server error handling
     server.on('error', (error) => {
       console.error('Server error:', error);
       handleFatalError(error);
@@ -376,10 +374,10 @@ async function startServer() {
   }
 }
 
-// Graceful shutdown
+// shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM signal received: initiating graceful shutdown');
-  
+
   try {
     if (server) {
       await new Promise((resolve) => {
@@ -406,7 +404,7 @@ process.on('SIGTERM', async () => {
   }
 });
 
-// Start the server
+// start the server
 startServer().catch((error) => {
   console.error('Failed to start application:', error);
   process.exit(1);

@@ -17,7 +17,7 @@ router.get('/profile', authenticateToken, async (req, res) => {
         const customer = await stripe.customers.retrieve(user.stripeCustomerId);
         if (customer.invoice_settings.default_payment_method) {
           const paymentMethod = await stripe.paymentMethods.retrieve(customer.invoice_settings.default_payment_method);
-          
+
           user = user.toObject();
           user.lastFourDigits = paymentMethod.card.last4;
           user.cardExpiry = `${paymentMethod.card.exp_month}/${paymentMethod.card.exp_year}`;
