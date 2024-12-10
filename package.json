@@ -6,6 +6,7 @@
     "node": "20.x"
   },
   "dependencies": {
+    "@sendgrid/mail": "^8.1.4",
     "@stripe/react-stripe-js": "^2.8.1",
     "@stripe/stripe-js": "^4.7.0",
     "@testing-library/jest-dom": "^6.5.0",
@@ -25,9 +26,11 @@
     "ffmpeg-static": "^5.2.0",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.468.0",
     "mongoose": "^8.7.0",
     "node-cache": "^5.1.2",
     "node-cron": "^3.0.3",
+    "nodemailer": "^6.9.16",
     "puppeteer": "^23.5.1",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",

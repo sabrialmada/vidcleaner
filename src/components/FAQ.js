@@ -1,58 +1,8 @@
 import React, { useState } from 'react';
+import './FAQ.css';
 
 const FAQ = () => {
     const [openQuestion, setOpenQuestion] = useState(null);
-
-    const styles = {
-        section: {
-            padding: '80px 0',
-            backgroundColor: '#fff'
-        },
-        container: {
-            maxWidth: '1200px',
-            margin: '0 auto',
-            padding: '0 40px'
-        },
-        title: {
-            fontSize: '2.5rem',
-            fontWeight: 'bold',
-            marginBottom: '40px',
-            color: '#333'
-        },
-        highlight: {
-            color: '#44ACE9',
-            CanvasGradient
-        },
-        questionContainer: {
-            borderBottom: '1px solid #e5e7eb'
-        },
-        question: {
-            width: '100%',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            padding: '24px 0',
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            textAlign: 'left',
-            fontSize: '1rem',
-            color: '#111827'
-        },
-        answer: {
-            paddingBottom: '24px',
-            color: '#4b5563'
-        },
-        footer: {
-            marginTop: '40px',
-            fontSize: '1rem',
-            color: '#4b5563'
-        },
-        contactLink: {
-            color: '#44ACE9',
-            textDecoration: 'none'
-        }
-    };
 
     const faqData = [
         {
@@ -61,7 +11,7 @@ const FAQ = () => {
         },
         {
             question: "Will this make me go Viral?",
-            answer: "Clean data doesn’t make you go viral, your content does. We recommend using videos with a 2k-10k views minimum"
+            answer: "Clean data doesn't make you go viral, your content does. We recommend using videos with a 2k-10k views minimum"
         },
         {
             question: "Does it work on Tiktok?",
@@ -82,26 +32,21 @@ const FAQ = () => {
     };
 
     return (
-        <section style={styles.section}>
-            <div style={styles.container}>
-                <h2 style={styles.title}>
-                    Frequently Asked <span style={styles.highlight}>Questions</span>
+        <section className="faq-section">
+            <div className="faq-container">
+                <h2 className="faq-title">
+                    Frequently Asked <span className="faq-highlight">Questions</span>
                 </h2>
                 <div>
                     {faqData.map((item, index) => (
-                        <div key={index} style={styles.questionContainer}>
+                        <div key={index} className="faq-question-container">
                             <button
-                                style={styles.question}
+                                className="faq-question"
                                 onClick={() => toggleQuestion(index)}
                             >
                                 <span>{item.question}</span>
                                 <svg
-                                    style={{
-                                        width: '24px',
-                                        height: '24px',
-                                        transform: openQuestion === index ? 'rotate(180deg)' : 'rotate(0)',
-                                        transition: 'transform 0.3s ease'
-                                    }}
+                                    className={`faq-icon ${openQuestion === index ? 'faq-icon-rotated' : ''}`}
                                     viewBox="0 0 24 24"
                                 >
                                     <path
@@ -115,16 +60,18 @@ const FAQ = () => {
                                 </svg>
                             </button>
                             {openQuestion === index && (
-                                <div style={styles.answer}>
+                                <div className="faq-answer">
                                     {item.answer}
                                 </div>
                             )}
                         </div>
                     ))}
                 </div>
-                <div style={styles.footer}>
+                <div className="faq-footer">
                     Still have questions?{' '}
-                    <a href="https://t.me/vidcleaner" style={styles.contactLink}
+                    <a
+                        href="https://t.me/vidcleaner"
+                        className="faq-contact-link"
                         target="_blank"
                         rel="noopener noreferrer"
                     >

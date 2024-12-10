@@ -3,6 +3,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const EmailService = require('../services/emailService');
 const router = express.Router();
 const rateLimit = require('express-rate-limit');
 
@@ -33,7 +34,6 @@ const generateRefreshToken = (user) => {
 router.post('/register', authLimiter, async (req, res) => {
   const { email, password } = req.body;
   console.log('Registration attempt for:', email);
-  console.log('Password being hashed:', password);
 
   if (!email || !password) {
     return res.status(400).json({ message: 'Email and password are required' });
@@ -52,12 +52,25 @@ router.post('/register', authLimiter, async (req, res) => {
     await user.save();
 
     console.log('User registered successfully:', email);
-    console.log('Hashed password:', hashedPassword);
+
+    // Send welcome email
+    try {
+      await EmailService.sendRegistrationEmail(email);
+      console.log('Welcome email sent successfully to:', email);
+    } catch (emailError) {
+      console.error('Failed to send welcome email:', emailError);
+      // Continue with registration even if email fails
+    }
 
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);
 
-    res.status(201).json({ accessToken, refreshToken, email: user.email });
+    res.status(201).json({ 
+      accessToken, 
+      refreshToken, 
+      email: user.email,
+      message: 'Registration successful! Please check your email for confirmation.'
+    });
   } catch (err) {
     console.error('Registration error:', err);
     res.status(500).json({ message: 'Server error during registration' });
