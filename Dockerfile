@@ -25,9 +25,9 @@ WORKDIR /usr/src/app
 # Copy package.json and package-lock.json from the backend folder
 COPY backend/package*.json ./
 
-# Install dependencies, including node-cron and bull
+# Install dependencies, including node-cron, bull, and sendgrid
 RUN npm install --only=production && \
-    npm install node-cron bull
+    npm install node-cron bull @sendgrid/mail
 
 # Copy the backend folder content
 COPY backend ./
