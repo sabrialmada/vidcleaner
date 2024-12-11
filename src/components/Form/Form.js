@@ -35,8 +35,6 @@ const Form = ({
             disabled={disabled}
             placeholder="Enter your password"
             className={disabled ? 'input-disabled' : ''}
-            pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}"
-            title="Must contain at least one number, one uppercase and lowercase letter, one special character, and at least 8 characters"
           />
         </div>
         {type === 'register' && (
@@ -49,8 +47,6 @@ const Form = ({
               disabled={disabled}
               placeholder="Repeat your password"
               className={disabled ? 'input-disabled' : ''}
-              pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}"
-              title="Must match the password above"
             />
           </div>
         )}

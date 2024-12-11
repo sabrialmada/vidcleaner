@@ -18,7 +18,7 @@ const Register = ({ setUserEmail }) => {
     setError('');
     setSuccessMessage('');
 
-    // Input validation
+    // Basic validation
     if (!email || !password || !repeatPassword) {
       setError('All fields are required');
       return;
@@ -26,13 +26,6 @@ const Register = ({ setUserEmail }) => {
 
     if (password !== repeatPassword) {
       setError("Passwords don't match");
-      return;
-    }
-
-    // Password strength validation
-    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
-    if (!passwordRegex.test(password)) {
-      setError('Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one number, and one special character');
       return;
     }
 
@@ -54,7 +47,7 @@ const Register = ({ setUserEmail }) => {
           headers: {
             'Content-Type': 'application/json',
           },
-          timeout: 10000, // 10 second timeout
+          timeout: 10000,
         }
       );
 
@@ -68,7 +61,7 @@ const Register = ({ setUserEmail }) => {
       // Show success message
       setSuccessMessage(message || 'Registration successful! Please check your email for confirmation.');
 
-      // Delayed redirect to allow user to see the success message
+      // Delayed redirect
       setTimeout(() => {
         console.log('Redirecting to dashboard');
         navigate('/dashboard/cleaner/video');
