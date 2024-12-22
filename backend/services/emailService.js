@@ -1,10 +1,10 @@
 const sgMail = require('@sendgrid/mail');
 const EmailLog = require('../models/EmailLog');
 
-// Initialize SendGrid with API key
+// initialize sendgrid with api key
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// Email sending status tracking
+// email status tracking
 const EMAIL_STATUS = {
     PENDING: 'pending',
     SENT: 'sent',
@@ -22,7 +22,7 @@ class EmailService {
         };
 
         try {
-            // Validate email format
+            // validate email format
             if (!this.isValidEmail(userEmail)) {
                 throw new Error('Invalid email format');
             }
@@ -67,7 +67,6 @@ class EmailService {
                 timestamp: new Date().toISOString()
             });
 
-            // Rethrow for handler
             throw new Error(`Failed to send registration email: ${error.message}`);
         }
     }
@@ -78,7 +77,7 @@ class EmailService {
             console.log(`Attempting to retry ${failedEmails.length} failed emails`);
 
             for (const email of failedEmails) {
-                if (email.attempts < 3) { // Maximum retry attempts
+                if (email.attempts < 3) { // max retry attempts
                     try {
                         console.log(`Retrying email for: ${email.recipient}, attempt ${email.attempts + 1}`);
                         await this.sendRegistrationEmail(email.recipient);
@@ -126,8 +125,8 @@ class EmailService {
         try {
             await EmailLog.updateOne(
                 { _id: emailId },
-                { 
-                    $set: { 
+                {
+                    $set: {
                         status: EMAIL_STATUS.FAILED,
                         error: 'Maximum retry attempts reached'
                     }
@@ -142,14 +141,14 @@ class EmailService {
     static async alertMonitoring(error) {
         if (process.env.NODE_ENV === 'production') {
             try {
-                // Log to console in all environments
+                // log to console
                 console.error('Email Service Error:', {
                     message: error.message,
                     stack: error.stack,
                     timestamp: new Date().toISOString()
                 });
 
-                // Additional production monitoring
+                // production monitoring
                 if (process.env.DATADOG_API_KEY) {
                     const datadog = require('./monitoring/datadog');
                     await datadog.logError('email_service_error', error);

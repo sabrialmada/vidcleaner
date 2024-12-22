@@ -53,21 +53,21 @@ router.post('/register', authLimiter, async (req, res) => {
 
     console.log('User registered successfully:', email);
 
-    // Send welcome email
+    // send welcome email
     try {
       await EmailService.sendRegistrationEmail(email);
       console.log('Welcome email sent successfully to:', email);
     } catch (emailError) {
       console.error('Failed to send welcome email:', emailError);
-      // Continue with registration even if email fails
+      // continue with registration even if email fails
     }
 
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);
 
-    res.status(201).json({ 
-      accessToken, 
-      refreshToken, 
+    res.status(201).json({
+      accessToken,
+      refreshToken,
       email: user.email,
       message: 'Registration successful! Please check your email for confirmation.'
     });

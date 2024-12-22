@@ -18,7 +18,7 @@ const Register = ({ setUserEmail }) => {
     setError('');
     setSuccessMessage('');
 
-    // Basic validation
+    // basic validation
     if (!email || !password || !repeatPassword) {
       setError('All fields are required');
       return;
@@ -29,7 +29,7 @@ const Register = ({ setUserEmail }) => {
       return;
     }
 
-    // Email format validation
+    // email format validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       setError('Please enter a valid email address');
@@ -54,14 +54,13 @@ const Register = ({ setUserEmail }) => {
       console.log('Registration response:', res.data);
       const { accessToken, email: registeredEmail, message } = res.data;
 
-      // Store user data
+      // store user data
       setUserEmail(registeredEmail);
       localStorage.setItem('token', accessToken);
 
-      // Show success message
+      // show success message
       setSuccessMessage(message || 'Registration successful! Please check your email for confirmation.');
 
-      // Delayed redirect
       setTimeout(() => {
         console.log('Redirecting to dashboard');
         navigate('/dashboard/cleaner/video');
@@ -70,7 +69,7 @@ const Register = ({ setUserEmail }) => {
     } catch (err) {
       console.error('Registration error:', err);
 
-      // Handle different types of errors
+      // handle different types of errors
       if (err.code === 'ECONNABORTED') {
         setError('Request timed out. Please try again.');
       } else if (err.response?.status === 429) {

@@ -1,52 +1,4 @@
-/* .form-card {
-  background-color: #fff;
-  padding: 40px;
-  border-radius: 10px;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-  max-width: 400px;
-  margin: 0 auto;
-  margin-top: 5rem;
-}
 
-.form-card h2 {
-  text-align: center;
-  color: #44ACE9;
-  font-size: 28px;
-  margin-bottom: 20px;
-}
-
-.form-group {
-  margin-bottom: 20px;
-}
-
-.form-group labe {
-  font-size: 16px;
-  color: #333;
-  margin-bottom: 5px;
-  display: block;
-}
-
-.form-group input {
-  width: 100%;
-  padding: 10px;
-  font-size: 16px;
-  border: 1px solid #ccc;
-  border-radius: 5px;
-}
-
-.submit-btn {
-  background-color: #44ACE9;
-  color: #fff;
-  border: none;
-  padding: 15px 30px;
-  font-size: 18px;
-  border-radius: 5px;
-  cursor: pointer;
-  width: 100%;
-} */
-
-
-/* Form.css */
 .form-card {
   background-color: white;
   padding: 2rem;
@@ -55,6 +7,7 @@
   width: 100%;
   max-width: 400px;
   margin: 0 auto;
+  margin-top: 5rem;
 }
 
 .form-card h2 {
@@ -119,7 +72,6 @@
   box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.15);
 }
 
-/* Disabled states */
 .input-disabled {
   background-color: #f7fafc;
   cursor: not-allowed;
@@ -132,7 +84,6 @@
   opacity: 0.7;
 }
 
-/* Error states */
 .form-group input:invalid {
   border-color: #fc8181;
 }
@@ -141,7 +92,6 @@
   box-shadow: 0 0 0 3px rgba(252, 129, 129, 0.15);
 }
 
-/* Responsive adjustments */
 @media (max-width: 480px) {
   .form-card {
     padding: 1.5rem;
