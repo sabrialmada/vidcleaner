@@ -366,52 +366,73 @@ async function getBestVideoUrl(page) {
 }
 
 // extract video url with retries and rate limit handling
-async function extractVideoUrl(page, maxAttempts = 5) {
-    const videoUrls = new Map();
-    let client;
-
-    try {
-        client = await page.target().createCDPSession();
-        await client.send('Network.enable');
-
-        const requestPromise = new Promise((resolve) => {
-            client.on('Network.responseReceived', (event) => {
-                const { response } = event;
-                const url = response.url;
-
-                if (url.includes('cdninstagram.com') &&
-                    url.includes('.mp4') &&
-                    response.mimeType.includes('video')) {
-                    const cleanUrl = url.split('&bytestart')[0];
-                    videoUrls.set(cleanUrl, response);
-                }
-            });
-
-            setTimeout(() => resolve(null), 10000); // 10s timeout
-        });
-
-        // wait for network idle
-        await Promise.race([
-            page.waitForNetworkIdle({ idleTime: 1000 }),
-            requestPromise
-        ]);
-
-        // get best quality url
-        const bestUrl = await getBestVideoUrl(videoUrls);
-        if (bestUrl) return bestUrl;
-
-        // if no url found yet, try page reload
-        for (let i = 0; i < maxAttempts && !bestUrl; i++) {
+async function extractVideoUrl(page) {
+    // Wait for video element with retry logic
+    let videoElement = null;
+    for (let i = 0; i < 3; i++) {
+        try {
+            videoElement = await page.waitForSelector('video', { timeout: 5000 });
+            break;
+        } catch (error) {
+            console.log(`Attempt ${i + 1} to find video element failed`);
             await page.reload({ waitUntil: 'networkidle0' });
-            await page.waitForTimeout(2000);
-        }
-
-        return await getBestVideoUrl(videoUrls);
-    } finally {
-        if (client) {
-            await client.detach().catch(() => { });
         }
     }
+    
+    if (!videoElement) {
+        throw new Error('Video element not found');
+    }
+
+    // Listen for video requests
+    const videoUrls = new Set();
+    const client = await page.target().createCDPSession();
+    await client.send('Network.enable');
+
+    return new Promise((resolve, reject) => {
+        let timeoutId = setTimeout(() => {
+            if (videoUrls.size > 0) {
+                resolve(Array.from(videoUrls)[0]);
+            } else {
+                reject(new Error('Timeout waiting for video URL'));
+            }
+        }, 10000);
+
+        client.on('Network.responseReceived', async (event) => {
+            const { response } = event;
+            const url = response.url;
+            
+            if (url.includes('.mp4') && 
+                response.mimeType.includes('video') && 
+                !url.includes('_n.mp4')) {
+                
+                // Verify the URL is accessible
+                try {
+                    const headResponse = await page.evaluate(async (videoUrl) => {
+                        const resp = await fetch(videoUrl, { method: 'HEAD' });
+                        return resp.ok;
+                    }, url);
+
+                    if (headResponse) {
+                        videoUrls.add(url);
+                        clearTimeout(timeoutId);
+                        resolve(url);
+                    }
+                } catch (error) {
+                    console.error('Error verifying video URL:', error);
+                }
+            }
+        });
+
+        // Also try to get URL from video element as backup
+        page.evaluate(() => {
+            const video = document.querySelector('video');
+            return video ? video.src : null;
+        }).then(src => {
+            if (src && src.includes('.mp4')) {
+                videoUrls.add(src);
+            }
+        });
+    });
 }
 
 // validate video data
@@ -627,7 +648,7 @@ async function downloadInstagramReel(req, res) {
     let tempFilePath = null;
     let outputFilePath = null;
     let job = null;
-
+    
     try {
         if (!isValidInstagramUrl(req.body.reelUrl)) {
             return res.status(400).json({ message: 'Invalid Instagram reel URL' });
@@ -636,37 +657,52 @@ async function downloadInstagramReel(req, res) {
         browser = await createBrowser();
         page = await createPage(browser);
 
-        // navigate to reel
-        await navigateToReel(page, req.body.reelUrl);
+        // Enhanced navigation with retry
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                await page.goto(req.body.reelUrl, {
+                    waitUntil: 'networkidle0',
+                    timeout: 30000
+                });
+                
+                // Handle login popup
+                try {
+                    await page.waitForSelector('[role="dialog"]', { timeout: 3000 });
+                    await page.evaluate(() => {
+                        const closeButton = Array.from(document.querySelectorAll('button'))
+                            .find(button => button.textContent.includes('Not Now'));
+                        if (closeButton) closeButton.click();
+                    });
+                } catch (e) {}
 
-        // get best quality video URL
-        const videoUrl = await getBestVideoUrl(page);
+                break;
+            } catch (error) {
+                if (attempt === 2) throw error;
+                await page.waitForTimeout(5000);
+            }
+        }
+
+        // Extract video URL with new function
+        const videoUrl = await extractVideoUrl(page);
         if (!videoUrl) {
             throw new Error('Could not find video URL');
         }
-        console.log('Found video URL:', videoUrl);
 
-        // download video
+        // Download with chunks
         const buffer = await downloadVideoBuffer(page, videoUrl);
         if (!buffer || !isValidMP4Buffer(buffer)) {
             throw new Error('Invalid video data received');
         }
 
-        // save temp file
+        // Save temp file
         tempFilePath = path.join(__dirname, '../uploads', `reel_${Date.now()}.mp4`);
         await fs.writeFile(tempFilePath, buffer);
 
-        // verify file is valid mp4
-        const fileStats = await fs.stat(tempFilePath);
-        if (fileStats.size < 100 * 1024) {
-            throw new Error('Downloaded file too small');
-        }
-
-        // process or send directly
+        // Check if metadata cleaning is requested
         if (req.body.cleanMetadata) {
             outputFilePath = path.join(__dirname, '../uploads', `processed_${Date.now()}.mp4`);
-
-            // add to processing queue
+            
+            // Add to processing queue
             job = await videoQueue.add({
                 inputPath: tempFilePath,
                 outputPath: outputFilePath,
@@ -677,7 +713,7 @@ async function downloadInstagramReel(req, res) {
                 backoff: { type: 'exponential', delay: 2000 }
             });
 
-            // wait for processing
+            // Wait for processing
             await new Promise((resolve, reject) => {
                 const processingTimeout = setTimeout(() => {
                     reject(new Error('Processing timeout'));
@@ -702,11 +738,11 @@ async function downloadInstagramReel(req, res) {
                 checkJob();
             });
 
-            // send processed file
+            // Send processed file
             const processedStats = await fs.stat(outputFilePath);
             res.setHeader('Content-Type', 'video/mp4');
-            res.setHeader('Content-Disposition', 'attachment; filename="processed_reel.mp4"');
             res.setHeader('Content-Length', processedStats.size);
+            res.setHeader('Content-Disposition', 'attachment; filename="processed_reel.mp4"');
 
             const fileStream = fsSync.createReadStream(outputFilePath);
             fileStream.pipe(res);
@@ -719,32 +755,28 @@ async function downloadInstagramReel(req, res) {
                 if (job) await videoQueue.getJob(job.id)?.remove().catch(console.error);
             });
         } else {
-            // send file
+            // Send unprocessed file
             const stats = await fs.stat(tempFilePath);
-
             res.setHeader('Content-Type', 'video/mp4');
-            res.setHeader('Content-Disposition', 'attachment; filename="instagram_reel.mp4"');
             res.setHeader('Content-Length', stats.size);
-            res.setHeader('Connection', 'keep-alive');
+            res.setHeader('Content-Disposition', 'attachment; filename="instagram_reel.mp4"');
 
-            const stream = fsSync.createReadStream(tempFilePath);
-            stream.pipe(res);
+            const fileStream = fsSync.createReadStream(tempFilePath);
+            fileStream.pipe(res);
 
-            await new Promise((resolve, reject) => {
-                stream.on('end', resolve);
-                stream.on('error', reject);
+            fileStream.on('end', () => {
+                fs.unlink(tempFilePath).catch(console.error);
             });
-            // cleanup
-            await fs.unlink(tempFilePath).catch(console.error);
         }
+
     } catch (error) {
         console.error('Download failed:', error);
-
-        // cleanup files
+        
+        // Cleanup on error
         if (tempFilePath) await fs.unlink(tempFilePath).catch(console.error);
         if (outputFilePath) await fs.unlink(outputFilePath).catch(console.error);
         if (job) await videoQueue.getJob(job.id)?.remove().catch(console.error);
-
+        
         if (!res.headersSent) {
             res.status(500).json({
                 message: 'Failed to download video',
